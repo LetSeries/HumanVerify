@@ -1,0 +1,35 @@
+# HumanVerify configuration
+# The plugin uses only Bukkit/Paper APIs and is marked Folia-compatible.
+auto-verify-on-join: true
+timeout-seconds: 60
+max-attempts: 3
+challenge-size: 27
+# RANDOM selects one mode from enabled-modes for each verification.
+verification-mode: RANDOM
+enabled-modes:
+  - COLOR
+  - MATERIAL
+  - SEQUENCE
+target-material: DIAMOND
+sequence-material: YELLOW_WOOL
+sequence-length: 3
+correct-material: LIME_WOOL
+wrong-material: RED_WOOL
+button-material: WHITE_WOOL
+messages:
+  prefix: '&8[&bHumanVerify&8] &r'
+  join: '&e请完成背包中的人机验证后再游玩。'
+  title: '&0请证明你是人类'
+  instructions: '&7点击唯一的 &a绿色方块&7。'
+  instructions-color: '&7点击唯一的 &a绿色方块&7。'
+  instructions-material: '&7找出唯一的 &b钻石&7。'
+  instructions-sequence: '&7请按编号顺序点击目标方块。'
+  sequence-progress: '&a步骤 {current} 正确，请继续。'
+  success: '&a验证成功，欢迎进入服务器！'
+  wrong: '&c选择错误！剩余尝试次数：&e{remaining}'
+  expired: '&c人机验证已超时，请重新验证。'
+  failed: '&c验证失败，请稍后重试。'
+  already-verified: '&a你已经通过验证。'
+  player-not-found: '&c找不到在线玩家：&e{player}'
+  admin-verified: '&a已将玩家 &e{player} &a标记为已验证。'
+  reloaded: '&a配置已重新加载。'

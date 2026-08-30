@@ -1,0 +1,23 @@
+name: HumanVerify
+version: '${project.version}'
+main: com.codex.humanverify.HumanVerifyPlugin
+api-version: '1.21'
+author: Codex
+description: In-game human verification with a public API for other plugins.
+folia-supported: true
+commands:
+  humanverify:
+    description: Manage human verification challenges.
+    usage: /humanverify [verify|verify <player>|reload]
+    aliases: [hv, captcha]
+    permission: humanverify.use
+permissions:
+  humanverify.use:
+    description: Allows using the human verification command.
+    default: true
+  humanverify.admin:
+    description: Allows verifying other players and reloading the plugin.
+    default: op
+  humanverify.bypass:
+    description: Skips automatic verification.
+    default: op
