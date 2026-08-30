@@ -127,12 +127,17 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
 
     @Override
     public CompletableFuture<VerificationResult> requestVerification(Player player) {
+        return requestVerification(player, false);
+    }
+
+    /** Starts a challenge even for verified or bypass-permission players. */
+    public CompletableFuture<VerificationResult> requestVerification(Player player, boolean force) {
         CompletableFuture<VerificationResult> already = new CompletableFuture<>();
         if (player == null || !player.isOnline()) {
             already.complete(VerificationResult.CANCELLED);
             return already;
         }
-        if (player.hasPermission("humanverify.bypass") || isVerified(player)) {
+        if (!force && (player.hasPermission("humanverify.bypass") || isVerified(player))) {
             already.complete(VerificationResult.SUCCESS);
             return already;
         }

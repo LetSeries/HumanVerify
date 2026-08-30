@@ -67,8 +67,10 @@ public final class HumanVerifyCommand implements CommandExecutor, TabCompleter {
             sender.sendMessage(plugin.message("player-not-found").replace("{player}", playerName));
             return true;
         }
-        plugin.markVerified(target);
-        sender.sendMessage(plugin.message("admin-verified").replace("{player}", target.getName()));
+        // Admin-triggered verification should show the challenge, not bypass it.
+        plugin.revokeVerification(target.getUniqueId());
+        plugin.requestVerification(target, true);
+        sender.sendMessage(plugin.message("verification-started").replace("{player}", target.getName()));
         return true;
     }
 

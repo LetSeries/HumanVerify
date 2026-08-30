@@ -32,4 +32,5 @@ messages:
   already-verified: '&a你已经通过验证。'
   player-not-found: '&c找不到在线玩家：&e{player}'
   admin-verified: '&a已将玩家 &e{player} &a标记为已验证。'
+  verification-started: '&a已为玩家 &e{player} &a启动人机验证。'
   reloaded: '&a配置已重新加载。'

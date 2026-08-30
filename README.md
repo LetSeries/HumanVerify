@@ -20,6 +20,8 @@
 - 使用 Paper/Folia `EntityScheduler`，不依赖传统全局调度器，兼容 Folia 区域线程模型。
 - 提供 `/humanverify verify`、`/humanverify verify <玩家>`、`/humanverify reload`。
 
+管理员执行 `/humanverify verify <玩家>` 会为目标玩家打开一次真实验证，不会直接将其标记为已验证；如需直接放行其他插件，可调用 API 的 `markVerified`。
+
 ## 运行环境
 
 - Java 21 或更高版本。
