@@ -1,4 +1,4 @@
-package com.codex.humanverify.api;
+package org.cubexmc.humanverify.api;
 
 import org.bukkit.entity.Player;
 import org.bukkit.event.Event;

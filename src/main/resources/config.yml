@@ -12,6 +12,8 @@ enabled-modes:
   - SEQUENCE
   - COUNT
   - ODD_ONE_OUT
+  - CENTER
+  - CORNER
 target-material: DIAMOND
 sequence-material: YELLOW_WOOL
 sequence-length: 3
@@ -32,6 +34,8 @@ messages:
   instructions-sequence: '&7请按编号顺序点击目标方块。'
   instructions-count: '&7请点击所有 &a目标方块&7。'
   instructions-odd-one-out: '&7找出唯一不同的方块。'
+  instructions-center: '&7请点击界面正中心的方块。'
+  instructions-corner: '&7请点击角落中的目标方块。'
   sequence-progress: '&a步骤 {current} 正确，请继续。'
   count-progress: '&a已找到 {current}/{total} 个目标方块。'
   success: '&a验证成功，欢迎进入服务器！'

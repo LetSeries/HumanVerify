@@ -1,4 +1,4 @@
-package com.codex.humanverify.core;
+package org.cubexmc.humanverify.core;
 
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.InventoryHolder;

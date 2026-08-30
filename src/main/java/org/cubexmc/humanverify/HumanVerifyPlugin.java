@@ -1,12 +1,12 @@
-package com.codex.humanverify;
+package org.cubexmc.humanverify;
 
-import com.codex.humanverify.api.HumanVerifyApi;
-import com.codex.humanverify.api.HumanVerifyEvent;
-import com.codex.humanverify.api.VerificationResult;
-import com.codex.humanverify.command.HumanVerifyCommand;
-import com.codex.humanverify.core.CaptchaHolder;
-import com.codex.humanverify.core.CaptchaSession;
-import com.codex.humanverify.core.ChallengeMode;
+import org.cubexmc.humanverify.api.HumanVerifyApi;
+import org.cubexmc.humanverify.api.HumanVerifyEvent;
+import org.cubexmc.humanverify.api.VerificationResult;
+import org.cubexmc.humanverify.command.HumanVerifyCommand;
+import org.cubexmc.humanverify.core.CaptchaHolder;
+import org.cubexmc.humanverify.core.CaptchaSession;
+import org.cubexmc.humanverify.core.ChallengeMode;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer;
 import org.bukkit.Bukkit;
@@ -137,6 +137,7 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
     }
 
     /** Starts a challenge even for verified or bypass-permission players. */
+    @Override
     public CompletableFuture<VerificationResult> requestVerification(Player player, boolean force) {
         CompletableFuture<VerificationResult> already = new CompletableFuture<>();
         if (player == null || !player.isOnline()) {
@@ -147,6 +148,7 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
             already.complete(VerificationResult.SUCCESS);
             return already;
         }
+        if (force) verified.remove(player.getUniqueId());
 
         CaptchaSession previous = sessions.remove(player.getUniqueId());
         if (previous != null) {
@@ -168,6 +170,8 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
         List<Integer> expectedSlots = switch (mode) {
             case SEQUENCE -> new ArrayList<>(slots.subList(0, sequenceLength));
             case COUNT -> new ArrayList<>(slots.subList(0, targetCount));
+            case CENTER -> List.of(centerSlot(size));
+            case CORNER -> List.of(cornerSlot(size));
             default -> List.of(slots.get(0));
         };
         for (int slot : slots) {
@@ -315,6 +319,7 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
             case SEQUENCE -> target ? sequenceMaterial : buttonMaterial;
             case COUNT -> target ? countMaterial : buttonMaterial;
             case ODD_ONE_OUT -> target ? oddOneOutTargetMaterial : oddOneOutMaterial;
+            case CENTER, CORNER -> target ? correctMaterial : buttonMaterial;
             case COLOR, RANDOM -> target ? correctMaterial : buttonMaterial;
         };
         ItemStack item = new ItemStack(material);
@@ -345,6 +350,17 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
     private int normalizedSize(int configured) {
         int size = Math.max(9, Math.min(54, configured));
         return size - (size % 9);
+    }
+
+    private int centerSlot(int size) {
+        int rows = size / 9;
+        return (rows / 2) * 9 + 4;
+    }
+
+    private int cornerSlot(int size) {
+        int rows = size / 9;
+        int[] corners = {0, 8, (rows - 1) * 9, size - 1};
+        return corners[ThreadLocalRandom.current().nextInt(corners.length)];
     }
 
     private ChallengeMode modeOrDefault(String value) {

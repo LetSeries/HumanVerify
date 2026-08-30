@@ -1,6 +1,6 @@
-package com.codex.humanverify.core;
+package org.cubexmc.humanverify.core;
 
-import com.codex.humanverify.api.VerificationResult;
+import org.cubexmc.humanverify.api.VerificationResult;
 import org.bukkit.entity.Player;
 
 import java.util.UUID;

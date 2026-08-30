@@ -1,6 +1,6 @@
 name: HumanVerify
 version: '${project.version}'
-main: com.codex.humanverify.HumanVerifyPlugin
+main: org.cubexmc.humanverify.HumanVerifyPlugin
 api-version: '1.21'
 author: Codex
 description: In-game human verification with a public API for other plugins.

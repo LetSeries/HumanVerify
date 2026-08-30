@@ -1,7 +1,7 @@
-package com.codex.humanverify.command;
+package org.cubexmc.humanverify.command;
 
-import com.codex.humanverify.HumanVerifyPlugin;
-import com.codex.humanverify.api.VerificationResult;
+import org.cubexmc.humanverify.HumanVerifyPlugin;
+import org.cubexmc.humanverify.api.VerificationResult;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
 import org.bukkit.command.Command;

@@ -1,4 +1,4 @@
-package com.codex.humanverify.api;
+package org.cubexmc.humanverify.api;
 
 import org.bukkit.entity.Player;
 
@@ -17,6 +17,9 @@ public interface HumanVerifyApi {
     }
 
     CompletableFuture<VerificationResult> requestVerification(Player player);
+
+    /** Starts a new challenge even when the player is already verified or bypassed. */
+    CompletableFuture<VerificationResult> requestVerification(Player player, boolean force);
 
     void markVerified(UUID playerId);
 
