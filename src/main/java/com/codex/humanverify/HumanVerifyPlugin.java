@@ -373,8 +373,9 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
 
     /** EntityScheduler is safe on both Paper and Folia; delay is measured in server ticks. */
     public void scheduleForPlayer(Player player, Runnable task, long delayTicks) {
+        long safeDelay = Math.max(1L, delayTicks);
         player.getScheduler().runDelayed(this, scheduledTask -> {
             if (player.isOnline()) task.run();
-        }, null, delayTicks);
+        }, null, safeDelay);
     }
 }
