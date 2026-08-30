@@ -4,7 +4,9 @@ public enum ChallengeMode {
     RANDOM("random"),
     COLOR("color"),
     MATERIAL("material"),
-    SEQUENCE("sequence");
+    SEQUENCE("sequence"),
+    COUNT("count"),
+    ODD_ONE_OUT("odd-one-out");
 
     private final String configKey;
 

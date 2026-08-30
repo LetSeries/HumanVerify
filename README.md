@@ -15,7 +15,7 @@
 - 玩家进入服务器后自动打开验证界面。
 - 27/36/45/54 格背包中随机放置唯一绿色方块，玩家点击正确方块即可通过。
 - 支持验证超时与错误次数限制。
-- 支持多种验证方式：唯一颜色方块、唯一材质方块、按编号顺序点击方块；可固定模式或随机选择。
+- 支持多种验证方式：唯一颜色方块、唯一材质方块、按编号顺序点击方块、点击指定数量目标方块、找出唯一不同方块；可固定模式或随机选择。
 - 通过 Bukkit `ServicesManager` 暴露公共 API，其他插件无需依赖实现包即可调用。
 - 使用 Paper/Folia `EntityScheduler`，不依赖传统全局调度器，兼容 Folia 区域线程模型。
 - 提供 `/humanverify verify`、`/humanverify verify <玩家>`、`/humanverify reload`。
@@ -73,7 +73,8 @@ public void onHumanVerify(HumanVerifyEvent event) {
 - `verification-mode`：`COLOR`、`MATERIAL`、`SEQUENCE` 或 `RANDOM`
 - `enabled-modes`：`RANDOM` 模式可随机选择的模式列表
 - `target-material`、`sequence-material`
-- `sequence-length`
+- `sequence-length`、`target-count`
+- `count-material`、`odd-one-out-material`、`odd-one-out-target-material`
 - 三种按钮材质与消息文本
 
 按钮材质不能与正确、错误或目标材质相同；如果配置冲突，插件会在启动或重载时记录警告并使用安全回退材质。
@@ -85,6 +86,8 @@ public void onHumanVerify(HumanVerifyEvent event) {
 - `COLOR`：在普通按钮中找出唯一的 `correct-material`，默认是绿色羊毛。
 - `MATERIAL`：在普通按钮中找出唯一的 `target-material`，默认是钻石。
 - `SEQUENCE`：按 `1`、`2`、`3` 等编号顺序点击 `sequence-length` 个方块；顺序错误会消耗一次尝试次数。
+- `COUNT`：点击 `target-count` 个目标方块，目标可以按任意顺序点击，重复点击会视为错误。
+- `ODD_ONE_OUT`：在一组相同材质的方块中找出唯一不同的方块。
 - `RANDOM`：每次验证从 `enabled-modes` 中随机选择一种方式；列表为空或配置无效时回退到 `COLOR`。
 
 例如，固定使用顺序验证：

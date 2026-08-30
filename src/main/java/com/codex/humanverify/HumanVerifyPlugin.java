@@ -47,6 +47,9 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
     private Material buttonMaterial;
     private Material targetMaterial;
     private Material sequenceMaterial;
+    private Material countMaterial;
+    private Material oddOneOutMaterial;
+    private Material oddOneOutTargetMaterial;
     private ChallengeMode configuredMode;
     private List<ChallengeMode> enabledModes;
 
@@ -93,6 +96,9 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
         wrongMaterial = distinctMaterial("wrong-material", Material.RED_WOOL, buttonMaterial);
         targetMaterial = distinctMaterial("target-material", Material.DIAMOND, buttonMaterial);
         sequenceMaterial = distinctMaterial("sequence-material", Material.YELLOW_WOOL, buttonMaterial);
+        countMaterial = distinctMaterial("count-material", Material.EMERALD, buttonMaterial);
+        oddOneOutMaterial = distinctMaterial("odd-one-out-material", Material.IRON_BLOCK, buttonMaterial);
+        oddOneOutTargetMaterial = distinctMaterial("odd-one-out-target-material", Material.GOLD_BLOCK, oddOneOutMaterial);
         configuredMode = modeOrDefault(getConfig().getString("verification-mode", "RANDOM"));
         enabledModes = enabledModes();
     }
@@ -158,12 +164,16 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
         Collections.shuffle(slots);
         ChallengeMode mode = selectMode();
         int sequenceLength = Math.max(2, Math.min(size, getConfig().getInt("sequence-length", 3)));
-        List<Integer> expectedSlots = mode == ChallengeMode.SEQUENCE
-                ? new ArrayList<>(slots.subList(0, sequenceLength))
-                : List.of(slots.get(0));
+        int targetCount = Math.max(1, Math.min(size - 1, getConfig().getInt("target-count", 3)));
+        List<Integer> expectedSlots = switch (mode) {
+            case SEQUENCE -> new ArrayList<>(slots.subList(0, sequenceLength));
+            case COUNT -> new ArrayList<>(slots.subList(0, targetCount));
+            default -> List.of(slots.get(0));
+        };
         for (int slot : slots) {
             int step = expectedSlots.indexOf(slot);
-            inventory.setItem(slot, createButton(mode, step < 0 ? 0 : step + 1));
+            boolean oddOneOut = mode == ChallengeMode.ODD_ONE_OUT && slot == slots.get(0);
+            inventory.setItem(slot, createButton(mode, step < 0 ? (oddOneOut ? 1 : 0) : step + 1));
         }
 
         CompletableFuture<VerificationResult> future = new CompletableFuture<>();
@@ -219,7 +229,20 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
         int slot = event.getRawSlot();
         if (slot < 0 || slot >= event.getView().getTopInventory().getSize()) return;
 
-        if (slot == session.getExpectedSlot()) {
+        if (session.getMode() == ChallengeMode.COUNT && session.isExpectedSlot(slot)) {
+            if (session.advance(slot)) {
+                verified.add(player.getUniqueId());
+                player.sendMessage(message("success"));
+                finish(session, VerificationResult.SUCCESS, true);
+            } else {
+                player.sendMessage(message("count-progress")
+                        .replace("{current}", String.valueOf(session.getProgress()))
+                        .replace("{total}", String.valueOf(session.getExpectedCount())));
+            }
+            return;
+        }
+
+        if (session.getMode() != ChallengeMode.COUNT && slot == session.getExpectedSlot()) {
             if (session.advance()) {
                 verified.add(player.getUniqueId());
                 player.sendMessage(message("success"));
@@ -232,7 +255,7 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
         }
 
         int attempts = session.registerWrongAttempt();
-        if (session.getMode() != ChallengeMode.SEQUENCE) {
+        if (session.getMode() != ChallengeMode.SEQUENCE && session.getMode() != ChallengeMode.COUNT) {
             event.getView().getTopInventory().setItem(slot, createWrongButton());
         }
         player.sendMessage(message("wrong").replace("{remaining}", String.valueOf(session.getRemainingAttempts())));
@@ -290,13 +313,15 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
         Material material = switch (mode) {
             case MATERIAL -> target ? targetMaterial : buttonMaterial;
             case SEQUENCE -> target ? sequenceMaterial : buttonMaterial;
+            case COUNT -> target ? countMaterial : buttonMaterial;
+            case ODD_ONE_OUT -> target ? oddOneOutTargetMaterial : oddOneOutMaterial;
             case COLOR, RANDOM -> target ? correctMaterial : buttonMaterial;
         };
         ItemStack item = new ItemStack(material);
         ItemMeta meta = item.getItemMeta();
         if (meta != null) {
-            String name = target ? (mode == ChallengeMode.SEQUENCE
-                    ? ChatColor.YELLOW + "验证步骤 " + step
+            String name = target ? (mode == ChallengeMode.SEQUENCE || mode == ChallengeMode.COUNT
+                    ? ChatColor.YELLOW + (mode == ChallengeMode.COUNT ? "点击目标 " : "验证步骤 ") + step
                     : ChatColor.GREEN + "点击这里") : ChatColor.WHITE + "验证按钮";
             meta.displayName(legacy(name));
             meta.lore(List.of(legacy(instructions(mode))));

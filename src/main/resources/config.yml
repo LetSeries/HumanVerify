@@ -10,9 +10,15 @@ enabled-modes:
   - COLOR
   - MATERIAL
   - SEQUENCE
+  - COUNT
+  - ODD_ONE_OUT
 target-material: DIAMOND
 sequence-material: YELLOW_WOOL
 sequence-length: 3
+target-count: 3
+count-material: EMERALD
+odd-one-out-material: IRON_BLOCK
+odd-one-out-target-material: GOLD_BLOCK
 correct-material: LIME_WOOL
 wrong-material: RED_WOOL
 button-material: WHITE_WOOL
@@ -24,7 +30,10 @@ messages:
   instructions-color: '&7点击唯一的 &a绿色方块&7。'
   instructions-material: '&7找出唯一的 &b钻石&7。'
   instructions-sequence: '&7请按编号顺序点击目标方块。'
+  instructions-count: '&7请点击所有 &a目标方块&7。'
+  instructions-odd-one-out: '&7找出唯一不同的方块。'
   sequence-progress: '&a步骤 {current} 正确，请继续。'
+  count-progress: '&a已找到 {current}/{total} 个目标方块。'
   success: '&a验证成功，欢迎进入服务器！'
   wrong: '&c选择错误！剩余尝试次数：&e{remaining}'
   expired: '&c人机验证已超时，请重新验证。'
