@@ -1,5 +1,6 @@
 # HumanVerify configuration
 # The plugin uses only Bukkit/Paper APIs and is marked Folia-compatible.
+config-version: 2
 auto-verify-on-join: true
 timeout-seconds: 60
 max-attempts: 3
@@ -24,6 +25,20 @@ odd-one-out-target-material: GOLD_BLOCK
 correct-material: LIME_WOOL
 wrong-material: RED_WOOL
 button-material: WHITE_WOOL
+# Enforcement: freeze unverified players during verification
+freeze-unverified: true
+freeze-movement: true
+freeze-interact: true
+freeze-chat: true
+freeze-commands: true
+command-whitelist:
+  - /login
+  - /register
+# Fail / expire actions: RETRY (re-open GUI) or KICK
+fail-action: RETRY
+expire-action: RETRY
+fail-kick-message: '&c验证失败次数过多，已被移出服务器。'
+expire-kick-message: '&c验证超时，已被移出服务器。'
 messages:
   prefix: '&8[&bHumanVerify&8] &r'
   join: '&e请完成背包中的人机验证后再游玩。'
@@ -43,6 +58,10 @@ messages:
   expired: '&c人机验证已超时，请重新验证。'
   failed: '&c验证失败，请稍后重试。'
   already-verified: '&a你已经通过验证。'
+  bypassed: '&a你拥有验证豁免权限，无需验证。'
+  retry: '&e验证未通过，已为你重新开始验证。'
+  frozen-chat: '&c验证完成前无法聊天。'
+  frozen-command: '&c验证完成前无法使用指令。'
   player-not-found: '&c找不到在线玩家：&e{player}'
   admin-verified: '&a已将玩家 &e{player} &a标记为已验证。'
   verification-started: '&a已为玩家 &e{player} &a启动人机验证。'

@@ -5,8 +5,7 @@
 ## 项目状态
 
 - 当前版本：`1.0.0`
-- 当前构建状态：`mvn clean verify` 已通过。
-- 当前没有自动化测试源码，构建日志显示 `No tests to run`；建议在目标 Paper/Folia/Purpur 服务端进行实际 GUI 与事件测试。
+- 当前构建状态：`mvn clean verify` 已通过（含单元测试）。
 - 项目**没有使用** [CubeX-MC/Plugins](https://github.com/CubeX-MC/Plugins) 框架。
 - 本项目是独立 Maven 项目，直接依赖 Paper API；没有 CubeX 的 Gradle Kotlin DSL、`buildSrc`、`cubex-*` 模块、`CubeXLib` 或 Shadow 打包配置。
 
@@ -16,6 +15,8 @@
 - 27/36/45/54 格背包中随机放置唯一绿色方块，玩家点击正确方块即可通过。
 - 支持验证超时与错误次数限制。
 - 支持多种验证方式：唯一颜色方块、唯一材质方块、按编号顺序点击方块、点击指定数量目标方块、找出唯一不同方块、点击中心或角落方块；可固定模式或随机选择。
+- **验证期间冻结**：未验证玩家无法移动、交互、挖掘、放置、攻击、受伤、丢弃物品、聊天、使用指令（均可独立配置开关）。
+- **失败/超时动作可配**：验证失败或超时后自动重开新验证（`RETRY`，默认）或踢出服务器（`KICK`），踢出消息可自定义。
 - 通过 Bukkit `ServicesManager` 暴露公共 API，其他插件无需依赖实现包即可调用。
 - 使用 Paper/Folia `EntityScheduler`，不依赖传统全局调度器，兼容 Folia 区域线程模型。
 - 提供 `/humanverify verify`、`/humanverify verify <玩家>`、`/humanverify reload`。
@@ -92,12 +93,9 @@ if (api.isVerified(player)) {
 
 api.requestVerification(player).thenAccept(result -> {
     if (result == VerificationResult.SUCCESS) {
-        // 只有 SUCCESS 才能执行受保护逻辑。
         continueGame(player);
         return;
     }
-
-    // FAILED、EXPIRED、CANCELLED 都不能继续执行成功逻辑。
     handleVerificationFailure(player, result);
 });
 ```
@@ -107,7 +105,6 @@ api.requestVerification(player).thenAccept(result -> {
 ```java
 api.requestVerification(player, true).thenAccept(result -> {
     if (result == VerificationResult.SUCCESS) {
-        // 玩家完成了这次新的验证。
         continueGame(player);
     }
 });
@@ -136,12 +133,7 @@ EXPIRED    超过 timeout-seconds
 CANCELLED  玩家退出、插件关闭或验证被新的请求替换
 ```
 
-不要无条件执行成功逻辑：
-
-```java
-// 错误示例：失败、超时和取消时也会继续执行。
-api.requestVerification(player).thenAccept(result -> continueGame(player));
-```
+> **事件一致性说明**：除离线 null-player 的极端情况外，所有 Future 终态都会伴随一次同 result 的 `HumanVerifyEvent`（包括 bypass 快速 `SUCCESS` 和退出时的 `CANCELLED`）。
 
 管理员或其他可信插件可以直接标记玩家为已验证：
 
@@ -163,7 +155,7 @@ api.revokeVerification(player.getUniqueId());
 api.requestVerification(player);
 ```
 
-如果需要一次调用完成“撤销并重新验证”，可直接使用 `requestVerification(player, true)`。
+如果需要一次调用完成"撤销并重新验证"，可直接使用 `requestVerification(player, true)`。
 
 监听所有验证结束事件：
 
@@ -179,7 +171,6 @@ public final class VerifyListener implements Listener {
         if (event.getResult() != VerificationResult.SUCCESS) {
             return;
         }
-
         continueGame(event.getPlayer());
     }
 }
@@ -200,9 +191,30 @@ public final class VerifyListener implements Listener {
 - `count-material`、`odd-one-out-material`、`odd-one-out-target-material`
 - 三种按钮材质与消息文本
 
-按钮材质不能与正确、错误或目标材质相同；如果配置冲突，插件会在启动或重载时记录警告并使用安全回退材质。
+### 验证期间冻结
 
-`challenge-size` 会被限制在 9 至 54 格，并自动调整为 9 的倍数。验证状态默认只在本次在线会话内保存；玩家退出后下次进入需要重新验证。管理员或其他插件可以通过 `markVerified` 临时放行，通过 `revokeVerification` 撤销放行。
+验证期间（玩家尚未通过验证时），以下行为默认被冻结：
+
+| 开关 | 默认值 | 控制范围 |
+|------|--------|----------|
+| `freeze-unverified` | `true` | 总开关，设为 `false` 关闭所有冻结 |
+| `freeze-movement` | `true` | 禁止移动（方块坐标变化） |
+| `freeze-interact` | `true` | 禁止交互、挖掘、放置、攻击、受伤、丢弃物品 |
+| `freeze-chat` | `true` | 禁止聊天 |
+| `freeze-commands` | `true` | 禁止使用指令 |
+| `command-whitelist` | `[/login, /register]` | 白名单指令前缀，`freeze-commands=true` 时放行 |
+
+### 失败 / 超时动作
+
+```yaml
+fail-action: RETRY    # KICK 或 RETRY（默认 RETRY = 自动重开新验证）
+expire-action: RETRY  # KICK 或 RETRY（默认 RETRY = 自动重开新验证）
+fail-kick-message: '&c验证失败次数过多，已被移出服务器。'
+expire-kick-message: '&c验证超时，已被移出服务器。'
+```
+
+- `RETRY`：关闭当前验证界面，延迟一小段时间后自动弹出新验证。
+- `KICK`：直接踢出玩家，显示对应的踢出消息。
 
 ### 验证方式
 
@@ -231,8 +243,15 @@ enabled-modes:
   - MATERIAL
 ```
 
+### 配置版本迁移
+
+插件使用 `config-version` 追踪配置版本。升级插件后，新配置项会自动以默认值补充到已有 `config.yml` 中，无需手动合并。用户已自定义的值不会被覆盖。
+
+按钮材质不能与正确、错误或目标材质相同；如果配置冲突，插件会在启动或重载时记录警告并使用安全回退材质。
+
+`challenge-size` 会被限制在 9 至 54 格，并自动调整为 9 的倍数。验证状态默认只在本次在线会话内保存；玩家退出后下次进入需要重新验证。管理员或其他插件可以通过 `markVerified` 临时放行，通过 `revokeVerification` 撤销放行。
+
 ## 已知限制
 
-- 项目目前没有单元测试或集成测试，验证逻辑需要通过实际服务端验证。
+- 验证 GUI 期间死亡/传送导致的界面关闭会自动重开，这是正常行为。
 - `correct-material`、`wrong-material` 和 `button-material` 只校验是否为可用物品材质；如果修改为与提示文字不匹配的材质，需要同时修改 `messages.instructions`。
-- 旧配置文件不会自动覆盖新增配置项；升级后如需启用新模式，请手动将新字段合并到 `plugins/HumanVerify/config.yml`。

@@ -7,6 +7,7 @@ import org.cubexmc.humanverify.command.HumanVerifyCommand;
 import org.cubexmc.humanverify.core.CaptchaHolder;
 import org.cubexmc.humanverify.core.CaptchaSession;
 import org.cubexmc.humanverify.core.ChallengeMode;
+import org.cubexmc.humanverify.listener.VerificationEnforcer;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer;
 import org.bukkit.Bukkit;
@@ -32,6 +33,7 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
@@ -40,8 +42,12 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ThreadLocalRandom;
 
 public final class HumanVerifyPlugin extends JavaPlugin implements Listener, HumanVerifyApi {
+
+    // -- Session & verified state ---------------------------------------------------
     private final Map<UUID, CaptchaSession> sessions = new ConcurrentHashMap<>();
     private final Set<UUID> verified = ConcurrentHashMap.newKeySet();
+
+    // -- Materials ------------------------------------------------------------------
     private Material correctMaterial;
     private Material wrongMaterial;
     private Material buttonMaterial;
@@ -50,14 +56,38 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
     private Material countMaterial;
     private Material oddOneOutMaterial;
     private Material oddOneOutTargetMaterial;
+
+    // -- Mode config ----------------------------------------------------------------
     private ChallengeMode configuredMode;
     private List<ChallengeMode> enabledModes;
+
+    // -- Enforcement config ---------------------------------------------------------
+    private boolean freezeMovement;
+    private boolean freezeInteract;
+    private boolean freezeChat;
+    private boolean freezeCommands;
+    private List<String> commandWhitelist;
+
+    // -- Fail / expire action -------------------------------------------------------
+    private FailAction failAction;
+    private FailAction expireAction;
+    private long retryDelayTicks;
+
+    // -- Shutdown flag (prevents RETRY/KICK during onDisable) -----------------------
+    private volatile boolean shuttingDown;
+
+    // ================================================================================
+    //  Lifecycle
+    // ================================================================================
 
     @Override
     public void onEnable() {
         saveDefaultConfig();
+        ensureConfigDefaults();
         loadSettings();
+
         Bukkit.getPluginManager().registerEvents(this, this);
+        Bukkit.getPluginManager().registerEvents(new VerificationEnforcer(this), this);
         Bukkit.getServicesManager().register(HumanVerifyApi.class, this, this, ServicePriority.Normal);
 
         PluginCommand command = getCommand("humanverify");
@@ -67,7 +97,7 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
             command.setTabCompleter(executor);
         }
 
-        // Covers /reload and plugin hot-reload scenarios without using the global scheduler.
+        // Covers /reload and plugin hot-reload scenarios
         for (Player player : Bukkit.getOnlinePlayers()) {
             if (getConfig().getBoolean("auto-verify-on-join", true)) {
                 scheduleForPlayer(player, () -> beginAutomaticVerification(player), 1L);
@@ -78,6 +108,7 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
 
     @Override
     public void onDisable() {
+        shuttingDown = true;
         for (CaptchaSession session : new ArrayList<>(sessions.values())) {
             finish(session, VerificationResult.CANCELLED, false);
         }
@@ -87,48 +118,184 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
 
     public void reloadPluginConfig() {
         reloadConfig();
+        ensureConfigDefaults();
         loadSettings();
     }
 
-    private void loadSettings() {
-        buttonMaterial = materialOrDefault("button-material", Material.WHITE_WOOL);
-        correctMaterial = distinctMaterial("correct-material", Material.LIME_WOOL, buttonMaterial);
-        wrongMaterial = distinctMaterial("wrong-material", Material.RED_WOOL, buttonMaterial);
-        targetMaterial = distinctMaterial("target-material", Material.DIAMOND, buttonMaterial);
-        sequenceMaterial = distinctMaterial("sequence-material", Material.YELLOW_WOOL, buttonMaterial);
-        countMaterial = distinctMaterial("count-material", Material.EMERALD, buttonMaterial);
-        oddOneOutMaterial = distinctMaterial("odd-one-out-material", Material.IRON_BLOCK, buttonMaterial);
-        oddOneOutTargetMaterial = distinctMaterial("odd-one-out-target-material", Material.GOLD_BLOCK, oddOneOutMaterial);
-        configuredMode = modeOrDefault(getConfig().getString("verification-mode", "RANDOM"));
-        enabledModes = enabledModes();
+    // ================================================================================
+    //  Config migration & validation
+    // ================================================================================
+
+    private void ensureConfigDefaults() {
+        var cfg = getConfig();
+        boolean changed = false;
+
+        // v2 defaults
+        if (!cfg.isSet("config-version")) {
+            cfg.set("config-version", 2);
+            changed = true;
+        }
+
+        // Helper: if key missing, set default and mark changed
+        changed |= setDefault(cfg, "freeze-unverified", true);
+        changed |= setDefault(cfg, "freeze-movement", true);
+        changed |= setDefault(cfg, "freeze-interact", true);
+        changed |= setDefault(cfg, "freeze-chat", true);
+        changed |= setDefault(cfg, "freeze-commands", true);
+        changed |= setDefault(cfg, "command-whitelist", List.of("/login", "/register"));
+        changed |= setDefault(cfg, "fail-action", "RETRY");
+        changed |= setDefault(cfg, "expire-action", "RETRY");
+        changed |= setDefault(cfg, "fail-kick-message", "&c验证失败次数过多，已被移出服务器。");
+        changed |= setDefault(cfg, "expire-kick-message", "&c验证超时，已被移出服务器。");
+        changed |= setDefault(cfg, "messages.bypassed", "&a你拥有验证豁免权限，无需验证。");
+        changed |= setDefault(cfg, "messages.retry", "&e验证未通过，已为你重新开始验证。");
+        changed |= setDefault(cfg, "messages.frozen-chat", "&c验证完成前无法聊天。");
+        changed |= setDefault(cfg, "messages.frozen-command", "&c验证完成前无法使用指令。");
+
+        if (changed) {
+            cfg.set("config-version", 2);
+            saveConfig();
+            getLogger().info("Configuration migrated to version 2 (new defaults written).");
+        }
     }
+
+    /** Set a default value only if the key is not already present. Returns true if changed. */
+    private static boolean setDefault(org.bukkit.configuration.file.FileConfiguration cfg, String path, Object value) {
+        if (cfg.isSet(path)) return false;
+        cfg.set(path, value);
+        return true;
+    }
+
+    private void loadSettings() {
+        var cfg = getConfig();
+
+        buttonMaterial = materialOrDefault("button-material", Material.WHITE_WOOL);
+        Material[] reserved = {buttonMaterial};
+
+        correctMaterial   = distinctMaterial("correct-material", Material.LIME_WOOL, reserved);
+        wrongMaterial     = distinctMaterial("wrong-material", Material.RED_WOOL, reserved);
+        targetMaterial    = distinctMaterial("target-material", Material.DIAMOND, reserved);
+        sequenceMaterial  = distinctMaterial("sequence-material", Material.YELLOW_WOOL, reserved);
+        countMaterial     = distinctMaterial("count-material", Material.EMERALD, reserved);
+        oddOneOutMaterial = distinctMaterial("odd-one-out-material", Material.IRON_BLOCK, reserved);
+        oddOneOutTargetMaterial = distinctMaterial("odd-one-out-target-material", Material.GOLD_BLOCK, new Material[]{buttonMaterial, oddOneOutMaterial});
+
+        configuredMode = parseMode(cfg.getString("verification-mode", "RANDOM"));
+        enabledModes   = resolveEnabledModes(cfg.getStringList("enabled-modes"));
+
+        // Enforcement
+        boolean globalFreeze = cfg.getBoolean("freeze-unverified", true);
+        freezeMovement = globalFreeze && cfg.getBoolean("freeze-movement", true);
+        freezeInteract = globalFreeze && cfg.getBoolean("freeze-interact", true);
+        freezeChat     = globalFreeze && cfg.getBoolean("freeze-chat", true);
+        freezeCommands = globalFreeze && cfg.getBoolean("freeze-commands", true);
+        commandWhitelist = cfg.getStringList("command-whitelist");
+
+        // Fail / expire
+        failAction   = parseAction(cfg.getString("fail-action", "RETRY"));
+        expireAction = parseAction(cfg.getString("expire-action", "RETRY"));
+        retryDelayTicks = Math.max(1L, cfg.getLong("retry-delay-ticks", 20L));
+    }
+
+    // ================================================================================
+    //  Material helpers
+    // ================================================================================
 
     private Material materialOrDefault(String path, Material fallback) {
-        Material material = Material.matchMaterial(getConfig().getString(path, fallback.name()));
-        return material == null || !material.isItem() ? fallback : material;
+        Material m = Material.matchMaterial(getConfig().getString(path, fallback.name()));
+        return m != null && m.isItem() ? m : fallback;
     }
 
-    private Material distinctMaterial(String path, Material fallback, Material reserved) {
-        Material material = materialOrDefault(path, fallback);
-        if (material != reserved) return material;
-        getLogger().warning("Configured " + path + " must differ from button-material; using " + fallback + ".");
-        if (fallback != reserved) return fallback;
-        for (Material candidate : List.of(Material.LIME_WOOL, Material.RED_WOOL, Material.YELLOW_WOOL, Material.GOLD_BLOCK)) {
-            if (candidate != reserved) return candidate;
+    /**
+     * Resolve a material that must differ from every entry in {@code reserved}.
+     * On conflict, falls back to {@code fallback}; if fallback is also reserved,
+     * tries safe candidates; last resort is STONE.
+     */
+    private Material distinctMaterial(String path, Material fallback, Material[] reserved) {
+        Material m = materialOrDefault(path, fallback);
+        if (!contains(reserved, m)) return m;
+
+        getLogger().warning(path + " must differ from reserved materials; using fallback " + fallback + ".");
+        if (!contains(reserved, fallback)) return fallback;
+
+        for (Material c : List.of(Material.LIME_WOOL, Material.RED_WOOL, Material.YELLOW_WOOL, Material.GOLD_BLOCK, Material.DIAMOND)) {
+            if (!contains(reserved, c)) return c;
         }
         return Material.STONE;
     }
 
-    private void beginAutomaticVerification(Player player) {
-        if (player.isOnline() && !player.hasPermission("humanverify.bypass") && !isVerified(player)) {
-            player.sendMessage(message("join"));
-            requestVerification(player);
+    private static boolean contains(Material[] arr, Material m) {
+        for (Material r : arr) if (r == m) return true;
+        return false;
+    }
+
+    // ================================================================================
+    //  Mode / action parsing (static for testability)
+    // ================================================================================
+
+    /** Parse a ChallengeMode; unknown → RANDOM. */
+    static ChallengeMode parseMode(String value) {
+        try {
+            return ChallengeMode.valueOf(value == null ? "RANDOM" : value.trim().toUpperCase(Locale.ROOT));
+        } catch (IllegalArgumentException e) {
+            return ChallengeMode.RANDOM;
         }
     }
+
+    /** Resolve enabled-modes list (de-duplicated, RANDOM excluded, empty → [COLOR]). */
+    static List<ChallengeMode> resolveEnabledModes(List<String> raw) {
+        List<ChallengeMode> modes = new ArrayList<>();
+        for (String v : raw) {
+            ChallengeMode m = parseMode(v);
+            if (m != ChallengeMode.RANDOM && !modes.contains(m)) modes.add(m);
+        }
+        if (modes.isEmpty()) modes.add(ChallengeMode.COLOR);
+        return List.copyOf(modes);
+    }
+
+    /** Parse FailAction; unknown → RETRY. */
+    static FailAction parseAction(String value) {
+        try {
+            return FailAction.valueOf(value == null ? "RETRY" : value.trim().toUpperCase(Locale.ROOT));
+        } catch (IllegalArgumentException e) {
+            return FailAction.RETRY;
+        }
+    }
+
+    // ================================================================================
+    //  Grid geometry helpers (package-visible, static for testing)
+    // ================================================================================
+
+    static int normalizedSize(int configured) {
+        int size = Math.max(9, Math.min(54, configured));
+        return size - (size % 9);
+    }
+
+    static int centerSlot(int size) {
+        int rows = size / 9;
+        return (rows / 2) * 9 + 4;
+    }
+
+    static int cornerSlot(int size, java.util.Random rng) {
+        int rows = size / 9;
+        int[] corners = {0, 8, (rows - 1) * 9, size - 1};
+        return corners[rng.nextInt(corners.length)];
+    }
+
+    // ================================================================================
+    //  Public API — HumanVerifyApi
+    // ================================================================================
 
     @Override
     public boolean isVerified(UUID playerId) {
         return verified.contains(playerId);
+    }
+
+    /** Returns true when the player has an active (unfinished) session and is not yet verified. */
+    public boolean isPendingVerification(Player player) {
+        if (player == null) return false;
+        UUID id = player.getUniqueId();
+        return sessions.containsKey(id) && !verified.contains(id);
     }
 
     @Override
@@ -136,7 +303,6 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
         return requestVerification(player, false);
     }
 
-    /** Starts a challenge even for verified or bypass-permission players. */
     @Override
     public CompletableFuture<VerificationResult> requestVerification(Player player, boolean force) {
         CompletableFuture<VerificationResult> already = new CompletableFuture<>();
@@ -146,10 +312,14 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
         }
         if (!force && (player.hasPermission("humanverify.bypass") || isVerified(player))) {
             already.complete(VerificationResult.SUCCESS);
+            // Fire event for consistency (bypass / already-verified fast path)
+            scheduleForPlayer(player, () ->
+                    Bukkit.getPluginManager().callEvent(new HumanVerifyEvent(player, VerificationResult.SUCCESS)), 1L);
             return already;
         }
         if (force) verified.remove(player.getUniqueId());
 
+        // Cancel any existing session
         CaptchaSession previous = sessions.remove(player.getUniqueId());
         if (previous != null) {
             finish(previous, VerificationResult.CANCELLED, false);
@@ -158,22 +328,25 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
         int size = normalizedSize(getConfig().getInt("challenge-size", 27));
         int maxAttempts = Math.max(1, getConfig().getInt("max-attempts", 3));
         CaptchaHolder holder = new CaptchaHolder(player.getUniqueId());
-        Inventory inventory = Bukkit.createInventory(holder, size, Component.text(title()));
+        Inventory inventory = Bukkit.createInventory(holder, size, titleComponent());
         holder.setInventory(inventory);
 
         List<Integer> slots = new ArrayList<>();
         for (int i = 0; i < size; i++) slots.add(i);
         Collections.shuffle(slots);
+
         ChallengeMode mode = selectMode();
         int sequenceLength = Math.max(2, Math.min(size, getConfig().getInt("sequence-length", 3)));
-        int targetCount = Math.max(1, Math.min(size - 1, getConfig().getInt("target-count", 3)));
+        int targetCount    = Math.max(1, Math.min(size - 1, getConfig().getInt("target-count", 3)));
+
         List<Integer> expectedSlots = switch (mode) {
             case SEQUENCE -> new ArrayList<>(slots.subList(0, sequenceLength));
-            case COUNT -> new ArrayList<>(slots.subList(0, targetCount));
-            case CENTER -> List.of(centerSlot(size));
-            case CORNER -> List.of(cornerSlot(size));
-            default -> List.of(slots.get(0));
+            case COUNT    -> new ArrayList<>(slots.subList(0, targetCount));
+            case CENTER   -> List.of(centerSlot(size));
+            case CORNER   -> List.of(cornerSlot(size, ThreadLocalRandom.current()));
+            default       -> List.of(slots.get(0));
         };
+
         for (int slot : slots) {
             int step = expectedSlots.indexOf(slot);
             boolean oddOneOut = mode == ChallengeMode.ODD_ONE_OUT && slot == slots.get(0);
@@ -190,14 +363,16 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
             player.openInventory(inventory);
         }, 0L);
 
+        // Timeout
         long timeoutTicks = Math.max(1L, Duration.ofSeconds(Math.max(5, getConfig().getLong("timeout-seconds", 60))).toSeconds() * 20L);
         scheduleForPlayer(player, () -> {
             CaptchaSession current = sessions.get(player.getUniqueId());
             if (current == session && !session.isCompleted()) {
                 player.sendMessage(message("expired"));
-                finish(session, VerificationResult.EXPIRED, true);
+                handleTerminal(session, VerificationResult.EXPIRED);
             }
         }, timeoutTicks);
+
         return future;
     }
 
@@ -212,6 +387,17 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
     public void revokeVerification(UUID playerId) {
         verified.remove(playerId);
     }
+
+    // ================================================================================
+    //  Enforcement queries (used by VerificationEnforcer)
+    // ================================================================================
+
+    public boolean isFreezeEnabled() { return true; } // global toggle always on; per-action handled in enforcer
+    public List<String> getCommandWhitelist() { return commandWhitelist; }
+
+    // ================================================================================
+    //  Event handlers (Listener)
+    // ================================================================================
 
     @EventHandler(priority = EventPriority.HIGHEST)
     public void onJoin(PlayerJoinEvent event) {
@@ -233,12 +419,15 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
         int slot = event.getRawSlot();
         if (slot < 0 || slot >= event.getView().getTopInventory().getSize()) return;
 
+        // --- COUNT mode: arbitrary order ---
         if (session.getMode() == ChallengeMode.COUNT && session.isExpectedSlot(slot)) {
             if (session.advance(slot)) {
                 verified.add(player.getUniqueId());
                 player.sendMessage(message("success"));
                 finish(session, VerificationResult.SUCCESS, true);
             } else {
+                // Mark slot as completed visually
+                markSlotCompleted(event.getView().getTopInventory(), slot);
                 player.sendMessage(message("count-progress")
                         .replace("{current}", String.valueOf(session.getProgress()))
                         .replace("{total}", String.valueOf(session.getExpectedCount())));
@@ -246,26 +435,30 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
             return;
         }
 
+        // --- SEQUENCE / single-target modes: strict order ---
         if (session.getMode() != ChallengeMode.COUNT && slot == session.getExpectedSlot()) {
             if (session.advance()) {
                 verified.add(player.getUniqueId());
                 player.sendMessage(message("success"));
                 finish(session, VerificationResult.SUCCESS, true);
             } else {
+                // Mark slot as completed visually
+                markSlotCompleted(event.getView().getTopInventory(), slot);
                 player.sendMessage(message("sequence-progress")
                         .replace("{current}", String.valueOf(session.getProgress())));
             }
             return;
         }
 
+        // --- Wrong click ---
         int attempts = session.registerWrongAttempt();
         if (session.getMode() != ChallengeMode.SEQUENCE && session.getMode() != ChallengeMode.COUNT) {
             event.getView().getTopInventory().setItem(slot, createWrongButton());
         }
         player.sendMessage(message("wrong").replace("{remaining}", String.valueOf(session.getRemainingAttempts())));
-        if (attempts >= sessionMaxAttempts(session)) {
+        if (attempts >= session.getMaxAttempts()) {
             player.sendMessage(message("failed"));
-            finish(session, VerificationResult.FAILED, true);
+            handleTerminal(session, VerificationResult.FAILED);
         }
     }
 
@@ -275,7 +468,7 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
         CaptchaSession session = sessions.get(holder.getPlayerId());
         if (session == null || session.isCompleted() || !(event.getPlayer() instanceof Player player)) return;
 
-        // Keep automatic/API verification mandatory: closing the GUI simply reopens it.
+        // Keep mandatory verification: closing the GUI simply reopens it.
         scheduleForPlayer(player, () -> {
             CaptchaSession current = sessions.get(holder.getPlayerId());
             if (current == session && !session.isCompleted() && player.isOnline()) {
@@ -291,43 +484,103 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
         verified.remove(event.getPlayer().getUniqueId());
     }
 
-    private int sessionMaxAttempts(CaptchaSession session) {
-        return session.getMaxAttempts();
+    // ================================================================================
+    //  Terminal handling — RETRY / KICK
+    // ================================================================================
+
+    /**
+     * Called after a session reaches FAILED or EXPIRED.
+     * Retries (re-opens verification) or kicks the player, based on config.
+     */
+    private void handleTerminal(CaptchaSession session, VerificationResult result) {
+        if (shuttingDown) {
+            finish(session, result, true);
+            return;
+        }
+
+        Player player = session.getPlayer();
+        FailAction action = (result == VerificationResult.FAILED) ? failAction : expireAction;
+
+        finish(session, result, true);
+
+        if (!player.isOnline()) return;
+
+        if (action == FailAction.KICK) {
+            String kickMsg = (result == VerificationResult.FAILED)
+                    ? getConfig().getString("fail-kick-message", "&c验证失败次数过多，已被移出服务器。")
+                    : getConfig().getString("expire-kick-message", "&c验证超时，已被移出服务器。");
+            kickPlayer(player, kickMsg);
+        } else {
+            // RETRY: re-open verification after a short delay
+            player.sendMessage(message("retry"));
+            scheduleForPlayer(player, () -> {
+                if (player.isOnline() && !isVerified(player)) {
+                    requestVerification(player, true);
+                }
+            }, retryDelayTicks);
+        }
     }
+
+    /** Kick via EntityScheduler (Folia-safe). */
+    private void kickPlayer(Player player, String rawMessage) {
+        String colored = color(rawMessage);
+        Component kickComponent = LegacyComponentSerializer.legacySection().deserialize(colored);
+        scheduleForPlayer(player, () -> {
+            if (player.isOnline()) {
+                player.kick(kickComponent);
+            }
+        }, 1L);
+    }
+
+    // ================================================================================
+    //  Finish & event
+    // ================================================================================
 
     private void finish(CaptchaSession session, VerificationResult result, boolean closeInventory) {
         if (!session.complete(result)) return;
         sessions.remove(session.getPlayerId(), session);
-        if (closeInventory && session.getPlayer().isOnline()) {
+
+        if (closeInventory && session.getPlayer() != null && session.getPlayer().isOnline()) {
             scheduleForPlayer(session.getPlayer(), () -> {
                 if (session.getPlayer().getOpenInventory().getTopInventory().getHolder() == session.getHolder()) {
                     session.getPlayer().closeInventory();
                 }
             }, 0L);
         }
+
+        // Always fire event (including offline / quit scenarios)
         fireEvent(session.getPlayer(), result);
     }
 
     private void fireEvent(Player player, VerificationResult result) {
-        if (player.isOnline()) Bukkit.getPluginManager().callEvent(new HumanVerifyEvent(player, result));
+        if (player != null) {
+            Bukkit.getPluginManager().callEvent(new HumanVerifyEvent(player, result));
+        }
     }
+
+    // ================================================================================
+    //  GUI builders
+    // ================================================================================
 
     private ItemStack createButton(ChallengeMode mode, int step) {
         boolean target = step > 0;
         Material material = switch (mode) {
-            case MATERIAL -> target ? targetMaterial : buttonMaterial;
-            case SEQUENCE -> target ? sequenceMaterial : buttonMaterial;
-            case COUNT -> target ? countMaterial : buttonMaterial;
-            case ODD_ONE_OUT -> target ? oddOneOutTargetMaterial : oddOneOutMaterial;
+            case MATERIAL     -> target ? targetMaterial : buttonMaterial;
+            case SEQUENCE     -> target ? sequenceMaterial : buttonMaterial;
+            case COUNT        -> target ? countMaterial : buttonMaterial;
+            case ODD_ONE_OUT  -> target ? oddOneOutTargetMaterial : oddOneOutMaterial;
             case CENTER, CORNER -> target ? correctMaterial : buttonMaterial;
-            case COLOR, RANDOM -> target ? correctMaterial : buttonMaterial;
+            case COLOR        -> target ? correctMaterial : buttonMaterial;
+            default -> buttonMaterial; // RANDOM is resolved before reaching here
         };
         ItemStack item = new ItemStack(material);
         ItemMeta meta = item.getItemMeta();
         if (meta != null) {
-            String name = target ? (mode == ChallengeMode.SEQUENCE || mode == ChallengeMode.COUNT
-                    ? ChatColor.YELLOW + (mode == ChallengeMode.COUNT ? "点击目标 " : "验证步骤 ") + step
-                    : ChatColor.GREEN + "点击这里") : ChatColor.WHITE + "验证按钮";
+            String name = target
+                    ? (mode == ChallengeMode.SEQUENCE || mode == ChallengeMode.COUNT
+                        ? ChatColor.YELLOW + (mode == ChallengeMode.COUNT ? "点击目标 " : "验证步骤 ") + step
+                        : ChatColor.GREEN + "点击这里")
+                    : ChatColor.WHITE + "验证按钮";
             meta.displayName(legacy(name));
             meta.lore(List.of(legacy(instructions(mode))));
             meta.addItemFlags(ItemFlag.HIDE_ATTRIBUTES);
@@ -347,40 +600,22 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
         return item;
     }
 
-    private int normalizedSize(int configured) {
-        int size = Math.max(9, Math.min(54, configured));
-        return size - (size % 9);
-    }
-
-    private int centerSlot(int size) {
-        int rows = size / 9;
-        return (rows / 2) * 9 + 4;
-    }
-
-    private int cornerSlot(int size) {
-        int rows = size / 9;
-        int[] corners = {0, 8, (rows - 1) * 9, size - 1};
-        return corners[ThreadLocalRandom.current().nextInt(corners.length)];
-    }
-
-    private ChallengeMode modeOrDefault(String value) {
-        try {
-            return ChallengeMode.valueOf(value == null ? "RANDOM" : value.trim().toUpperCase(java.util.Locale.ROOT));
-        } catch (IllegalArgumentException exception) {
-            getLogger().warning("Unknown verification-mode '" + value + "'; using RANDOM.");
-            return ChallengeMode.RANDOM;
+    /** Mark a slot as "completed" visually (green + "已完成") for SEQUENCE/COUNT progress. */
+    private void markSlotCompleted(Inventory inventory, int slot) {
+        ItemStack item = new ItemStack(correctMaterial);
+        ItemMeta meta = item.getItemMeta();
+        if (meta != null) {
+            meta.displayName(legacy(ChatColor.GREEN + "已完成"));
+            meta.lore(List.of(legacy(ChatColor.GREEN + "已点击")));
+            meta.addItemFlags(ItemFlag.HIDE_ATTRIBUTES);
+            item.setItemMeta(meta);
         }
+        inventory.setItem(slot, item);
     }
 
-    private List<ChallengeMode> enabledModes() {
-        List<ChallengeMode> modes = new ArrayList<>();
-        for (String value : getConfig().getStringList("enabled-modes")) {
-            ChallengeMode mode = modeOrDefault(value);
-            if (mode != ChallengeMode.RANDOM && !modes.contains(mode)) modes.add(mode);
-        }
-        if (modes.isEmpty()) modes.add(ChallengeMode.COLOR);
-        return List.copyOf(modes);
-    }
+    // ================================================================================
+    //  Messages & utilities
+    // ================================================================================
 
     private ChallengeMode selectMode() {
         if (configuredMode != ChallengeMode.RANDOM) return configuredMode;
@@ -394,8 +629,10 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
         return color(value);
     }
 
-    private String title() {
-        return ChatColor.stripColor(message("title"));
+    /** Title as a Component (preserves color codes). */
+    private Component titleComponent() {
+        String raw = message("title");
+        return LegacyComponentSerializer.legacySection().deserialize(raw);
     }
 
     public String message(String key) {
@@ -404,7 +641,7 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
         return color(prefix + value);
     }
 
-    private String color(String text) {
+    String color(String text) {
         return ChatColor.translateAlternateColorCodes('&', text == null ? "" : text);
     }
 
@@ -412,11 +649,24 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
         return LegacyComponentSerializer.legacySection().deserialize(text == null ? "" : text);
     }
 
-    /** EntityScheduler is safe on both Paper and Folia; delay is measured in server ticks. */
+    private void beginAutomaticVerification(Player player) {
+        if (player.isOnline() && !player.hasPermission("humanverify.bypass") && !isVerified(player)) {
+            player.sendMessage(message("join"));
+            requestVerification(player);
+        }
+    }
+
+    /** EntityScheduler — safe on both Paper and Folia. */
     public void scheduleForPlayer(Player player, Runnable task, long delayTicks) {
-        long safeDelay = Math.max(1L, delayTicks);
+        long safeDelay = Math.max(0L, delayTicks);
         player.getScheduler().runDelayed(this, scheduledTask -> {
             if (player.isOnline()) task.run();
         }, null, safeDelay);
+    }
+
+    /** Terminal state action. */
+    public enum FailAction {
+        RETRY,
+        KICK
     }
 }

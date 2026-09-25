@@ -30,13 +30,19 @@ public final class HumanVerifyCommand implements CommandExecutor, TabCompleter {
                 sender.sendMessage(ChatColor.RED + "控制台请使用 /humanverify verify <玩家>。");
                 return true;
             }
+            // Bypass permission: inform and skip
+            if (player.hasPermission("humanverify.bypass")) {
+                player.sendMessage(plugin.message("bypassed"));
+                return true;
+            }
             if (plugin.isVerified(player)) {
                 sender.sendMessage(plugin.message("already-verified"));
                 return true;
             }
             plugin.requestVerification(player).thenAccept(result -> {
                 if (result == VerificationResult.CANCELLED && player.isOnline()) {
-                    player.sendMessage(plugin.message("failed"));
+                    plugin.scheduleForPlayer(player, () ->
+                            player.sendMessage(plugin.message("failed")), 1L);
                 }
             });
             return true;
