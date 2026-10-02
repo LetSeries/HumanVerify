@@ -1,0 +1,98 @@
+name: Build and Release
+
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: build-release-main
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  build-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+
+      - name: Sync to latest main
+        run: |
+          git fetch origin main
+          git checkout -B main origin/main
+          git log --oneline -3
+
+      - name: Compute next patch version
+        id: version
+        run: |
+          python3 .github/scripts/next-version.py "$GITHUB_RUN_NUMBER" | tee version.env
+          {
+            echo "current=$(grep '^current=' version.env | cut -d= -f2)"
+            echo "new=$(grep '^new=' version.env | cut -d= -f2)"
+            echo "tag=$(grep '^tag=' version.env | cut -d= -f2)"
+          } >> "$GITHUB_OUTPUT"
+          cat "$GITHUB_OUTPUT"
+
+      - name: Set pom version
+        run: |
+          NEW="${{ steps.version.outputs.new }}"
+          python3 - "$NEW" <<'PY'
+          import re, sys
+          new = sys.argv[1]
+          with open("pom.xml", encoding="utf-8") as fh:
+              pom = fh.read()
+          pom, n = re.subn(r"<version>[^<]+</version>", f"<version>{new}</version>", pom, count=1)
+          if n != 1:
+              raise SystemExit("failed to update pom version")
+          with open("pom.xml", "w", encoding="utf-8") as fh:
+              fh.write(pom)
+          print(f"pom version -> {new}")
+          PY
+          git diff -- pom.xml | head -n 30
+
+      - name: Build (tests included)
+        run: mvn -B package
+
+      - name: Commit version bump [skip ci]
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add pom.xml
+          if git diff --cached --quiet; then
+            echo "No pom changes to commit."
+          else
+            git commit -m "chore(release): bump version to ${{ steps.version.outputs.new }} [skip ci]"
+            git pull --rebase origin main || true
+            git push origin HEAD:main
+          fi
+
+      - name: Create tag and GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          NEW="${{ steps.version.outputs.new }}"
+          TAG="${{ steps.version.outputs.tag }}"
+          JAR="target/HumanVerify-${NEW}.jar"
+          ls -la target/
+          test -f "$JAR" || { echo "Expected jar not found: $JAR"; exit 1; }
+          cp "$JAR" "HumanVerify-${NEW}.jar"
+          git fetch origin main
+          git tag "$TAG" origin/main
+          git push origin "$TAG"
+          SUBJECT=$(git log -1 --pretty=%s origin/main)
+          SHA=$(git rev-parse --short origin/main)
+          gh release create "$TAG" \
+            --title "HumanVerify $TAG" \
+            --notes "Auto release for ${SHA}: ${SUBJECT} (pom ${{ steps.version.outputs.current }} -> ${NEW})" \
+            "HumanVerify-${NEW}.jar"
