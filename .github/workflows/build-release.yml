@@ -74,8 +74,21 @@ jobs:
             echo "No pom changes to commit."
           else
             git commit -m "chore(release): bump version to ${{ steps.version.outputs.new }} [skip ci]"
-            git pull --rebase origin main || true
-            git push origin HEAD:main
+            PUSHED=false
+            for i in 1 2 3; do
+              git fetch origin main
+              if git rebase origin/main; then
+                if git push origin HEAD:main; then PUSHED=true; break; fi
+              else
+                git rebase --abort
+              fi
+              echo "Push attempt $i failed, retrying in 5s..."
+              sleep 5
+            done
+            if [ "$PUSHED" != "true" ]; then
+              echo "Failed to push version bump after 3 attempts."
+              exit 1
+            fi
           fi
 
       - name: Create tag and GitHub Release

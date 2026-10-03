@@ -209,6 +209,7 @@ public final class VerifyListener implements Listener {
 ```yaml
 fail-action: RETRY    # KICK 或 RETRY（默认 RETRY = 自动重开新验证）
 expire-action: RETRY  # KICK 或 RETRY（默认 RETRY = 自动重开新验证）
+retry-delay-ticks: 20 # RETRY 时延迟多少 tick 后重开验证（20 tick = 1 秒，最小为 1）
 fail-kick-message: '&c验证失败次数过多，已被移出服务器。'
 expire-kick-message: '&c验证超时，已被移出服务器。'
 ```
