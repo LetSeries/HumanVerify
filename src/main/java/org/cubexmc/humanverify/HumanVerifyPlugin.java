@@ -197,7 +197,7 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
         freezeInteract = cfg.getBoolean("freeze-interact", true);
         freezeChat     = cfg.getBoolean("freeze-chat", true);
         freezeCommands = cfg.getBoolean("freeze-commands", true);
-        commandWhitelist = cfg.getStringList("command-whitelist");
+        commandWhitelist = List.copyOf(cfg.getStringList("command-whitelist"));
 
         // Fail / expire
         failAction   = parseAction(cfg.getString("fail-action", "RETRY"));
@@ -444,7 +444,7 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
     public boolean isFreezeInteract() { return freezeActive(freezeUnverified, freezeInteract); }
     public boolean isFreezeChat() { return freezeActive(freezeUnverified, freezeChat); }
     public boolean isFreezeCommands() { return freezeActive(freezeUnverified, freezeCommands); }
-    public List<String> getCommandWhitelist() { return commandWhitelist; }
+    public List<String> getCommandWhitelist() { return List.copyOf(commandWhitelist); }
 
     // ================================================================================
     //  Event handlers (Listener)
