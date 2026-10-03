@@ -91,9 +91,22 @@ jobs:
           git fetch origin main
           git tag "$TAG" origin/main
           git push origin "$TAG"
-          SUBJECT=$(git log -1 --pretty=%s origin/main)
           SHA=$(git rev-parse --short origin/main)
+          PREV_TAG=$(git describe --tags --abbrev=0 origin/main^ 2>/dev/null || echo "")
+          if [ -n "$PREV_TAG" ]; then
+            echo "Changes since $PREV_TAG:"
+            CHANGELOG=$(git log --pretty='- %s (%h)' "$PREV_TAG"..origin/main)
+          else
+            CHANGELOG=$(git log --pretty='- %s (%h)' -10 origin/main)
+          fi
+          {
+            echo "Auto release for ${SHA} (pom ${{ steps.version.outputs.current }} -> ${NEW})"
+            echo ""
+            echo "### Changes"
+            echo "$CHANGELOG"
+          } > release-notes.md
+          cat release-notes.md
           gh release create "$TAG" \
             --title "HumanVerify $TAG" \
-            --notes "Auto release for ${SHA}: ${SUBJECT} (pom ${{ steps.version.outputs.current }} -> ${NEW})" \
+            --notes-file release-notes.md \
             "HumanVerify-${NEW}.jar"

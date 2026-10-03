@@ -62,6 +62,7 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
     private List<ChallengeMode> enabledModes;
 
     // -- Enforcement config ---------------------------------------------------------
+    private boolean freezeUnverified;
     private boolean freezeMovement;
     private boolean freezeInteract;
     private boolean freezeChat;
@@ -145,6 +146,7 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
         changed |= setDefault(cfg, "command-whitelist", List.of("/login", "/register"));
         changed |= setDefault(cfg, "fail-action", "RETRY");
         changed |= setDefault(cfg, "expire-action", "RETRY");
+        changed |= setDefault(cfg, "retry-delay-ticks", 20L);
         changed |= setDefault(cfg, "fail-kick-message", "&c验证失败次数过多，已被移出服务器。");
         changed |= setDefault(cfg, "expire-kick-message", "&c验证超时，已被移出服务器。");
         changed |= setDefault(cfg, "messages.bypassed", "&a你拥有验证豁免权限，无需验证。");
@@ -184,17 +186,17 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
         enabledModes   = resolveEnabledModes(cfg.getStringList("enabled-modes"));
 
         // Enforcement
-        boolean globalFreeze = cfg.getBoolean("freeze-unverified", true);
-        freezeMovement = globalFreeze && cfg.getBoolean("freeze-movement", true);
-        freezeInteract = globalFreeze && cfg.getBoolean("freeze-interact", true);
-        freezeChat     = globalFreeze && cfg.getBoolean("freeze-chat", true);
-        freezeCommands = globalFreeze && cfg.getBoolean("freeze-commands", true);
+        freezeUnverified = cfg.getBoolean("freeze-unverified", true);
+        freezeMovement = cfg.getBoolean("freeze-movement", true);
+        freezeInteract = cfg.getBoolean("freeze-interact", true);
+        freezeChat     = cfg.getBoolean("freeze-chat", true);
+        freezeCommands = cfg.getBoolean("freeze-commands", true);
         commandWhitelist = cfg.getStringList("command-whitelist");
 
         // Fail / expire
         failAction   = parseAction(cfg.getString("fail-action", "RETRY"));
         expireAction = parseAction(cfg.getString("expire-action", "RETRY"));
-        retryDelayTicks = Math.max(1L, cfg.getLong("retry-delay-ticks", 20L));
+        retryDelayTicks = normalizeRetryDelay(cfg.getLong("retry-delay-ticks", 20L));
     }
 
     // ================================================================================
@@ -260,6 +262,16 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
         } catch (IllegalArgumentException e) {
             return FailAction.RETRY;
         }
+    }
+
+    /** Freeze is active only when both the global toggle and the per-action toggle are on. */
+    static boolean freezeActive(boolean globalFreeze, boolean actionFreeze) {
+        return globalFreeze && actionFreeze;
+    }
+
+    /** Retry delay in ticks, clamped to >= 1. */
+    static long normalizeRetryDelay(long configured) {
+        return Math.max(1L, configured);
     }
 
     // ================================================================================
@@ -392,7 +404,11 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
     //  Enforcement queries (used by VerificationEnforcer)
     // ================================================================================
 
-    public boolean isFreezeEnabled() { return true; } // global toggle always on; per-action handled in enforcer
+    public boolean isFreezeEnabled() { return freezeUnverified; }
+    public boolean isFreezeMovement() { return freezeActive(freezeUnverified, freezeMovement); }
+    public boolean isFreezeInteract() { return freezeActive(freezeUnverified, freezeInteract); }
+    public boolean isFreezeChat() { return freezeActive(freezeUnverified, freezeChat); }
+    public boolean isFreezeCommands() { return freezeActive(freezeUnverified, freezeCommands); }
     public List<String> getCommandWhitelist() { return commandWhitelist; }
 
     // ================================================================================

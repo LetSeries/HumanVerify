@@ -4,7 +4,7 @@
 
 ## 项目状态
 
-- 当前版本：`1.0.0`
+- 版本号跟随每次 `main` 分支提交自动递增并发布 GitHub Release（详见 [Releases](https://github.com/LetSeries/HumanVerify/releases)，请使用最新 Release 的 JAR）。
 - 当前构建状态：`mvn clean verify` 已通过（含单元测试）。
 - 项目**没有使用** [CubeX-MC/Plugins](https://github.com/CubeX-MC/Plugins) 框架。
 - 本项目是独立 Maven 项目，直接依赖 Paper API；没有 CubeX 的 Gradle Kotlin DSL、`buildSrc`、`cubex-*` 模块、`CubeXLib` 或 Shadow 打包配置。
@@ -37,7 +37,7 @@
 mvn package
 ```
 
-生成文件：`target/HumanVerify-1.0.0.jar`。将其放入服务端 `plugins/` 目录。该 JAR 使用 Paper API 的 `provided` 依赖，不需要额外安装 CubeXLib 或其他运行库。
+生成文件：`target/HumanVerify-<版本>.jar`（版本号见最新 Release）。将其放入服务端 `plugins/` 目录。该 JAR 使用 Paper API 的 `provided` 依赖，不需要额外安装 CubeXLib 或其他运行库。
 
 ## API 调用
 
@@ -60,7 +60,7 @@ depend:
   - HumanVerify
 ```
 
-编译时将 `HumanVerify-1.0.0.jar` 作为只编译依赖引入。Maven 示例：
+编译时将最新 Release 的 `HumanVerify-<版本>.jar` 作为只编译依赖引入。Maven 示例（版本号替换为实际使用的版本）：
 
 ```xml
 <dependency>

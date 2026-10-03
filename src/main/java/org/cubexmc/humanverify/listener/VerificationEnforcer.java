@@ -43,7 +43,7 @@ public final class VerificationEnforcer implements Listener {
 
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     public void onMove(PlayerMoveEvent event) {
-        if (!plugin.isFreezeEnabled()) return;
+        if (!plugin.isFreezeMovement()) return;
         Player player = event.getPlayer();
         if (!plugin.isPendingVerification(player)) return;
 
@@ -63,7 +63,7 @@ public final class VerificationEnforcer implements Listener {
 
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     public void onInteract(PlayerInteractEvent event) {
-        if (!plugin.isFreezeEnabled()) return;
+        if (!plugin.isFreezeInteract()) return;
         if (plugin.isPendingVerification(event.getPlayer())) {
             event.setCancelled(true);
         }
@@ -71,7 +71,7 @@ public final class VerificationEnforcer implements Listener {
 
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     public void onInteractEntity(PlayerInteractEntityEvent event) {
-        if (!plugin.isFreezeEnabled()) return;
+        if (!plugin.isFreezeInteract()) return;
         if (plugin.isPendingVerification(event.getPlayer())) {
             event.setCancelled(true);
         }
@@ -79,7 +79,7 @@ public final class VerificationEnforcer implements Listener {
 
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     public void onBreak(BlockBreakEvent event) {
-        if (!plugin.isFreezeEnabled()) return;
+        if (!plugin.isFreezeInteract()) return;
         if (plugin.isPendingVerification(event.getPlayer())) {
             event.setCancelled(true);
         }
@@ -87,7 +87,7 @@ public final class VerificationEnforcer implements Listener {
 
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     public void onPlace(BlockPlaceEvent event) {
-        if (!plugin.isFreezeEnabled()) return;
+        if (!plugin.isFreezeInteract()) return;
         if (plugin.isPendingVerification(event.getPlayer())) {
             event.setCancelled(true);
         }
@@ -99,7 +99,7 @@ public final class VerificationEnforcer implements Listener {
 
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     public void onDamage(EntityDamageEvent event) {
-        if (!plugin.isFreezeEnabled()) return;
+        if (!plugin.isFreezeInteract()) return;
         if (!(event.getEntity() instanceof Player player)) return;
         if (plugin.isPendingVerification(player)) {
             event.setCancelled(true);
@@ -108,7 +108,7 @@ public final class VerificationEnforcer implements Listener {
 
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     public void onDamageByEntity(EntityDamageByEntityEvent event) {
-        if (!plugin.isFreezeEnabled()) return;
+        if (!plugin.isFreezeInteract()) return;
         if (!(event.getDamager() instanceof Player damager)) return;
         if (plugin.isPendingVerification(damager)) {
             event.setCancelled(true);
@@ -121,7 +121,7 @@ public final class VerificationEnforcer implements Listener {
 
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     public void onDrop(PlayerDropItemEvent event) {
-        if (!plugin.isFreezeEnabled()) return;
+        if (!plugin.isFreezeInteract()) return;
         if (plugin.isPendingVerification(event.getPlayer())) {
             event.setCancelled(true);
         }
@@ -133,7 +133,7 @@ public final class VerificationEnforcer implements Listener {
 
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     public void onInventoryClick(InventoryClickEvent event) {
-        if (!plugin.isFreezeEnabled()) return;
+        if (!plugin.isFreezeInteract()) return;
         if (!(event.getWhoClicked() instanceof Player player)) return;
         if (!plugin.isPendingVerification(player)) return;
 
@@ -151,7 +151,7 @@ public final class VerificationEnforcer implements Listener {
 
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     public void onDrag(InventoryDragEvent event) {
-        if (!plugin.isFreezeEnabled()) return;
+        if (!plugin.isFreezeInteract()) return;
         if (!(event.getWhoClicked() instanceof Player player)) return;
         if (!plugin.isPendingVerification(player)) return;
 
@@ -168,7 +168,7 @@ public final class VerificationEnforcer implements Listener {
 
     @EventHandler(priority = EventPriority.LOWEST, ignoreCancelled = true)
     public void onChat(AsyncPlayerChatEvent event) {
-        if (!plugin.isFreezeEnabled()) return;
+        if (!plugin.isFreezeChat()) return;
         Player player = event.getPlayer();
         if (!plugin.isPendingVerification(player)) return;
 
@@ -183,7 +183,7 @@ public final class VerificationEnforcer implements Listener {
 
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     public void onCommand(PlayerCommandPreprocessEvent event) {
-        if (!plugin.isFreezeEnabled()) return;
+        if (!plugin.isFreezeCommands()) return;
         Player player = event.getPlayer();
         if (!plugin.isPendingVerification(player)) return;
 

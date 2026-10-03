@@ -37,6 +37,8 @@ command-whitelist:
 # Fail / expire actions: RETRY (re-open GUI) or KICK
 fail-action: RETRY
 expire-action: RETRY
+# Delay (in ticks, 20 ticks = 1s) before re-opening verification on RETRY
+retry-delay-ticks: 20
 fail-kick-message: '&c验证失败次数过多，已被移出服务器。'
 expire-kick-message: '&c验证超时，已被移出服务器。'
 messages:

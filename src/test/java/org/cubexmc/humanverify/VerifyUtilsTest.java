@@ -135,4 +135,24 @@ class VerifyUtilsTest {
         assertEquals(1, modes.size());
         assertEquals(ChallengeMode.COLOR, modes.get(0));
     }
+
+    // --- freezeActive ---
+
+    @Test
+    void freezeActiveRequiresBothToggles() {
+        assertTrue(HumanVerifyPlugin.freezeActive(true, true));
+        assertFalse(HumanVerifyPlugin.freezeActive(true, false));
+        assertFalse(HumanVerifyPlugin.freezeActive(false, true));
+        assertFalse(HumanVerifyPlugin.freezeActive(false, false));
+    }
+
+    // --- normalizeRetryDelay ---
+
+    @Test
+    void normalizeRetryDelayClampsToAtLeastOne() {
+        assertEquals(1L, HumanVerifyPlugin.normalizeRetryDelay(0L));
+        assertEquals(1L, HumanVerifyPlugin.normalizeRetryDelay(-5L));
+        assertEquals(20L, HumanVerifyPlugin.normalizeRetryDelay(20L));
+        assertEquals(100L, HumanVerifyPlugin.normalizeRetryDelay(100L));
+    }
 }
