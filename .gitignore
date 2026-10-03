@@ -3,5 +3,4 @@ target/
 *.iml
 # CI release workflow intermediates (generated at repo root)
 HumanVerify-*.jar
-version.env
 release-notes.md

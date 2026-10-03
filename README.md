@@ -1,5 +1,8 @@
 # HumanVerify
 
+[![Build and Release](https://github.com/LetSeries/HumanVerify/actions/workflows/build-release.yml/badge.svg)](https://github.com/LetSeries/HumanVerify/actions/workflows/build-release.yml)
+[![Latest Release](https://img.shields.io/github/v/release/LetSeries/HumanVerify)](https://github.com/LetSeries/HumanVerify/releases)
+
 一个面向高版本 Minecraft 服务端的游戏内人机验证插件，支持 **Paper、Folia、Purpur**。
 
 ## 项目状态

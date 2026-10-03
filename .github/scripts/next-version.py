@@ -1,36 +1,83 @@
-"""Compute the next patch version from pom.xml.
+"""Compute or set the project patch version from pom.xml.
 
-Reads the first <version> tag in pom.xml (the project version),
-bumps the patch component, and prints GitHub Actions outputs:
+The project <version> is anchored to the block following
+<artifactId>human-verify</artifactId> so parent/modelVersion tags
+can never be matched by accident.
 
-    current=<current pom version>
-    new=<bumped version>
-    tag=v<new>-b<run number>
+Modes:
+    python3 next-version.py <run-number>
+        Compute current -> next patch version, print results and
+        append current=/new=/tag= to $GITHUB_OUTPUT when set.
 
-Usage:
-    python3 next-version.py [run-number]
+    python3 next-version.py --write <new-version>
+        Rewrite the project version in pom.xml (fails unless
+        exactly one anchored match exists).
 """
 
+import os
 import re
 import sys
 
+PROJECT_VERSION_RE = re.compile(
+    r"<artifactId>\s*human-verify\s*</artifactId>\s*<version>([^<]+)</version>"
+)
+VERSION_RE = re.compile(r"\d+\.\d+\.\d+")
+
+
+def read_pom(path: str = "pom.xml") -> str:
+    with open(path, encoding="utf-8") as fh:
+        return fh.read()
+
+
+def current_version(pom: str) -> str:
+    match = PROJECT_VERSION_RE.search(pom)
+    if match is None:
+        raise SystemExit("no project <version> anchored to human-verify found in pom.xml")
+    return match.group(1).strip()
+
+
+def next_patch(current: str) -> str:
+    base = current.split("-")[0]
+    if not VERSION_RE.fullmatch(base):
+        raise SystemExit(f"unexpected project version format: {current!r}")
+    major, minor, patch = (int(part) for part in base.split("."))
+    return f"{major}.{minor}.{patch + 1}"
+
+
+def write_version(pom: str, new: str) -> str:
+    if not VERSION_RE.fullmatch(new.split("-")[0]):
+        raise SystemExit(f"refusing to write invalid version: {new!r}")
+    updated, count = PROJECT_VERSION_RE.subn(
+        lambda m: m.group(0).replace(m.group(1), new), pom, count=1
+    )
+    if count != 1:
+        raise SystemExit("failed to update project version in pom.xml")
+    return updated
+
+
+def emit(name: str, value: str) -> None:
+    print(f"{name}={value}")
+    output = os.environ.get("GITHUB_OUTPUT")
+    if output:
+        with open(output, "a", encoding="utf-8") as fh:
+            fh.write(f"{name}={value}\n")
+
 
 def main() -> None:
-    run_number = sys.argv[1] if len(sys.argv) > 1 else "0"
-    with open("pom.xml", encoding="utf-8") as fh:
-        pom = fh.read()
-    match = re.search(r"<version>([^<]+)</version>", pom)
-    if match is None:
-        raise SystemExit("no <version> tag found in pom.xml")
-    current = match.group(1).strip()
-    base = current.split("-")[0]
-    nums = [int(part) for part in base.split(".")]
-    while len(nums) < 3:
-        nums.append(0)
-    new = f"{nums[0]}.{nums[1]}.{nums[2] + 1}"
-    print(f"current={current}")
-    print(f"new={new}")
-    print(f"tag=v{new}-b{run_number}")
+    if len(sys.argv) == 3 and sys.argv[1] == "--write":
+        new = sys.argv[2]
+        updated = write_version(read_pom(), new)
+        with open("pom.xml", "w", encoding="utf-8") as fh:
+            fh.write(updated)
+        print(f"pom version -> {new}")
+        return
+    if len(sys.argv) != 2 or sys.argv[1] == "--write":
+        raise SystemExit("usage: next-version.py <run-number> | next-version.py --write <new-version>")
+    current = current_version(read_pom())
+    new = next_patch(current)
+    emit("current", current)
+    emit("new", new)
+    emit("tag", f"v{new}-b{sys.argv[1]}")
 
 
 if __name__ == "__main__":

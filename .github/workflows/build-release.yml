@@ -15,6 +15,7 @@ permissions:
 jobs:
   build-release:
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -36,34 +37,26 @@ jobs:
 
       - name: Compute next patch version
         id: version
-        run: |
-          python3 .github/scripts/next-version.py "$GITHUB_RUN_NUMBER" | tee version.env
-          {
-            echo "current=$(grep '^current=' version.env | cut -d= -f2)"
-            echo "new=$(grep '^new=' version.env | cut -d= -f2)"
-            echo "tag=$(grep '^tag=' version.env | cut -d= -f2)"
-          } >> "$GITHUB_OUTPUT"
-          cat "$GITHUB_OUTPUT"
+        run: python3 .github/scripts/next-version.py "$GITHUB_RUN_NUMBER"
 
       - name: Set pom version
         run: |
-          NEW="${{ steps.version.outputs.new }}"
-          python3 - "$NEW" <<'PY'
-          import re, sys
-          new = sys.argv[1]
-          with open("pom.xml", encoding="utf-8") as fh:
-              pom = fh.read()
-          pom, n = re.subn(r"<version>[^<]+</version>", f"<version>{new}</version>", pom, count=1)
-          if n != 1:
-              raise SystemExit("failed to update pom version")
-          with open("pom.xml", "w", encoding="utf-8") as fh:
-              fh.write(pom)
-          print(f"pom version -> {new}")
-          PY
+          python3 .github/scripts/next-version.py --write "${{ steps.version.outputs.new }}"
           git diff -- pom.xml | head -n 30
 
       - name: Build (tests included)
-        run: mvn -B package
+        run: mvn -B clean package
+
+      - name: Verify jar and plugin.yml version
+        run: |
+          NEW="${{ steps.version.outputs.new }}"
+          JAR="target/HumanVerify-${NEW}.jar"
+          test -f "$JAR" || { echo "Expected jar not found: $JAR"; exit 1; }
+          unzip -p "$JAR" plugin.yml > /tmp/plugin.yml
+          cat /tmp/plugin.yml | head -n 8
+          grep -q "version: '${NEW}'" /tmp/plugin.yml \
+            || { echo "plugin.yml version mismatch (expected ${NEW})"; exit 1; }
+          echo "Jar and plugin.yml version OK: ${NEW}"
 
       - name: Commit version bump [skip ci]
         run: |
@@ -101,6 +94,7 @@ jobs:
           ls -la target/
           test -f "$JAR" || { echo "Expected jar not found: $JAR"; exit 1; }
           cp "$JAR" "HumanVerify-${NEW}.jar"
+          sha256sum "HumanVerify-${NEW}.jar" | tee "HumanVerify-${NEW}.jar.sha256"
           git fetch origin main
           git tag "$TAG" origin/main
           git push origin "$TAG"
@@ -122,4 +116,5 @@ jobs:
           gh release create "$TAG" \
             --title "HumanVerify $TAG" \
             --notes-file release-notes.md \
-            "HumanVerify-${NEW}.jar"
+            "HumanVerify-${NEW}.jar" \
+            "HumanVerify-${NEW}.jar.sha256"
