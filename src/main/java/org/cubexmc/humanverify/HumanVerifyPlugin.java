@@ -20,6 +20,7 @@ import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.inventory.InventoryClickEvent;
 import org.bukkit.event.inventory.InventoryCloseEvent;
+import org.bukkit.event.inventory.InventoryDragEvent;
 import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.inventory.Inventory;
@@ -46,6 +47,9 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
     // -- Session & verified state ---------------------------------------------------
     private final Map<UUID, CaptchaSession> sessions = new ConcurrentHashMap<>();
     private final Set<UUID> verified = ConcurrentHashMap.newKeySet();
+    // Players waiting for a RETRY re-open (or join-delayed auto verify):
+    // no active session yet, but freezing must still apply.
+    private final Set<UUID> retryPending = ConcurrentHashMap.newKeySet();
 
     // -- Materials ------------------------------------------------------------------
     private Material correctMaterial;
@@ -101,6 +105,7 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
         // Covers /reload and plugin hot-reload scenarios
         for (Player player : Bukkit.getOnlinePlayers()) {
             if (getConfig().getBoolean("auto-verify-on-join", true)) {
+                retryPending.add(player.getUniqueId());
                 scheduleForPlayer(player, () -> beginAutomaticVerification(player), 1L);
             }
         }
@@ -114,6 +119,7 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
             finish(session, VerificationResult.CANCELLED, false);
         }
         sessions.clear();
+        retryPending.clear();
         Bukkit.getServicesManager().unregister(HumanVerifyApi.class, this);
     }
 
@@ -312,7 +318,7 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
     public boolean isPendingVerification(Player player) {
         if (player == null) return false;
         UUID id = player.getUniqueId();
-        return sessions.containsKey(id) && !verified.contains(id);
+        return (sessions.containsKey(id) || retryPending.contains(id)) && !verified.contains(id);
     }
 
     @Override
@@ -328,6 +334,7 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
             return already;
         }
         if (!force && (player.hasPermission("humanverify.bypass") || isVerified(player))) {
+            retryPending.remove(player.getUniqueId());
             already.complete(VerificationResult.SUCCESS);
             // Fire event for consistency (bypass / already-verified fast path)
             scheduleForPlayer(player, () ->
@@ -374,6 +381,7 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
 
         CompletableFuture<VerificationResult> future = new CompletableFuture<>();
         CaptchaSession session = new CaptchaSession(player.getUniqueId(), player, holder, mode, expectedSlots, maxAttempts, future);
+        retryPending.remove(player.getUniqueId());
         sessions.put(player.getUniqueId(), session);
 
         scheduleForPlayer(player, () -> {
@@ -398,6 +406,7 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
     @Override
     public void markVerified(UUID playerId) {
         verified.add(playerId);
+        retryPending.remove(playerId);
         CaptchaSession session = sessions.remove(playerId);
         if (session != null) finish(session, VerificationResult.SUCCESS, true);
     }
@@ -425,6 +434,8 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
     @EventHandler(priority = EventPriority.HIGHEST)
     public void onJoin(PlayerJoinEvent event) {
         if (getConfig().getBoolean("auto-verify-on-join", true)) {
+            // Freeze immediately; the join message + GUI open happen 1 tick later.
+            retryPending.add(event.getPlayer().getUniqueId());
             scheduleForPlayer(event.getPlayer(), () -> beginAutomaticVerification(event.getPlayer()), 1L);
         }
     }
@@ -435,6 +446,7 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
         event.setCancelled(true);
         if (!(event.getWhoClicked() instanceof Player player)) return;
         if (!holder.getPlayerId().equals(player.getUniqueId())) return;
+        if (event.isShiftClick()) return; // shift-click would move GUI buttons into player inventory
         if (event.getClickedInventory() == null || event.getClickedInventory() != event.getView().getTopInventory()) return;
 
         CaptchaSession session = sessions.get(player.getUniqueId());
@@ -485,6 +497,22 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
         }
     }
 
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    public void onInventoryDrag(InventoryDragEvent event) {
+        // Dragging across the verification GUI would overlay/replace challenge buttons:
+        // cancel any drag that touches the captcha inventory.
+        if (!(event.getView().getTopInventory().getHolder() instanceof CaptchaHolder holder)) return;
+        if (!(event.getWhoClicked() instanceof Player player)) return;
+        if (!holder.getPlayerId().equals(player.getUniqueId())) return;
+        int topSize = event.getView().getTopInventory().getSize();
+        for (int rawSlot : event.getRawSlots()) {
+            if (rawSlot >= 0 && rawSlot < topSize) {
+                event.setCancelled(true);
+                return;
+            }
+        }
+    }
+
     @EventHandler
     public void onInventoryClose(InventoryCloseEvent event) {
         if (!(event.getInventory().getHolder() instanceof CaptchaHolder holder)) return;
@@ -504,6 +532,7 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
     public void onQuit(PlayerQuitEvent event) {
         CaptchaSession session = sessions.remove(event.getPlayer().getUniqueId());
         if (session != null) finish(session, VerificationResult.CANCELLED, false);
+        retryPending.remove(event.getPlayer().getUniqueId());
         verified.remove(event.getPlayer().getUniqueId());
     }
 
@@ -534,11 +563,15 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
                     : getConfig().getString("expire-kick-message", "&c验证超时，已被移出服务器。");
             kickPlayer(player, kickMsg);
         } else {
-            // RETRY: re-open verification after a short delay
+            // RETRY: re-open verification after a short delay.
+            // Mark pending immediately so freezing stays active during the delay.
+            retryPending.add(player.getUniqueId());
             player.sendMessage(message("retry"));
             scheduleForPlayer(player, () -> {
                 if (player.isOnline() && !isVerified(player)) {
                     requestVerification(player, true);
+                } else {
+                    retryPending.remove(player.getUniqueId());
                 }
             }, retryDelayTicks);
         }
@@ -548,7 +581,10 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
     private void kickPlayer(Player player, String rawMessage) {
         String colored = color(rawMessage);
         Component kickComponent = LegacyComponentSerializer.legacySection().deserialize(colored);
+        // Keep the player frozen until the kick lands (1 tick later).
+        retryPending.add(player.getUniqueId());
         scheduleForPlayer(player, () -> {
+            retryPending.remove(player.getUniqueId());
             if (player.isOnline()) {
                 player.kick(kickComponent);
             }
@@ -676,6 +712,8 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
         if (player.isOnline() && !player.hasPermission("humanverify.bypass") && !isVerified(player)) {
             player.sendMessage(message("join"));
             requestVerification(player);
+        } else {
+            retryPending.remove(player.getUniqueId());
         }
     }
 
