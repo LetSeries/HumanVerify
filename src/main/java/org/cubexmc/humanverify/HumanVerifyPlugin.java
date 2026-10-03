@@ -285,6 +285,25 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
         return Math.max(1L, Duration.ofSeconds(Math.max(5L, timeoutSeconds)).toSeconds() * 20L);
     }
 
+    /**
+     * Whitelist check for frozen commands. Matches on the command word only:
+     * "/login" matches "/login" and "/login <args>" but NOT "/loginfoo".
+     * Entries may be written with or without a leading slash.
+     */
+    public static boolean isWhitelistedCommand(String message, List<String> whitelist) {
+        if (message == null || whitelist == null) return false;
+        String input = message.trim().toLowerCase(Locale.ROOT);
+        if (!input.startsWith("/")) return false;
+        String commandWord = input.split("\\s+", 2)[0];
+        for (String allowed : whitelist) {
+            String entry = allowed.trim().toLowerCase(Locale.ROOT);
+            if (entry.isEmpty()) continue;
+            if (!entry.startsWith("/")) entry = "/" + entry;
+            if (commandWord.equals(entry)) return true;
+        }
+        return false;
+    }
+
     // ================================================================================
     //  Grid geometry helpers (package-visible, static for testing)
     // ================================================================================

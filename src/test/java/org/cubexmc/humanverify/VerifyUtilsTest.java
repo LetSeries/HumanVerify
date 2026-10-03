@@ -170,4 +170,35 @@ class VerifyUtilsTest {
         assertEquals(5L * 20L, HumanVerifyPlugin.timeoutTicks(-10L));
         assertEquals(5L * 20L, HumanVerifyPlugin.timeoutTicks(4L));
     }
+
+    // --- isWhitelistedCommand ---
+
+    @Test
+    void whitelistMatchesExactCommandWord() {
+        List<String> whitelist = List.of("/login", "/register");
+        assertTrue(HumanVerifyPlugin.isWhitelistedCommand("/login", whitelist));
+        assertTrue(HumanVerifyPlugin.isWhitelistedCommand("/login secret123", whitelist));
+        assertTrue(HumanVerifyPlugin.isWhitelistedCommand("/LOGIN", whitelist));
+        assertTrue(HumanVerifyPlugin.isWhitelistedCommand("/register x y", whitelist));
+    }
+
+    @Test
+    void whitelistRejectsPrefixLookalikes() {
+        List<String> whitelist = List.of("/login", "/register");
+        assertFalse(HumanVerifyPlugin.isWhitelistedCommand("/loginfoo", whitelist));
+        assertFalse(HumanVerifyPlugin.isWhitelistedCommand("/loginx", whitelist));
+        assertFalse(HumanVerifyPlugin.isWhitelistedCommand("/register2", whitelist));
+        assertFalse(HumanVerifyPlugin.isWhitelistedCommand("/help", whitelist));
+        assertFalse(HumanVerifyPlugin.isWhitelistedCommand("/humaverify verify", whitelist));
+    }
+
+    @Test
+    void whitelistHandlesEdgeCases() {
+        assertFalse(HumanVerifyPlugin.isWhitelistedCommand(null, List.of("/login")));
+        assertFalse(HumanVerifyPlugin.isWhitelistedCommand("/login", null));
+        assertFalse(HumanVerifyPlugin.isWhitelistedCommand("/login", List.of()));
+        // Entry without leading slash still matches
+        assertTrue(HumanVerifyPlugin.isWhitelistedCommand("/login", List.of("login")));
+        assertTrue(HumanVerifyPlugin.isWhitelistedCommand("/login foo", List.of("login")));
+    }
 }

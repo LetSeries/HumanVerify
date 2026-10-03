@@ -188,10 +188,8 @@ public final class VerificationEnforcer implements Listener {
         if (!plugin.isPendingVerification(player)) return;
 
         String msg = event.getMessage(); // always starts with "/"
-        for (String allowed : plugin.getCommandWhitelist()) {
-            if (msg.toLowerCase(java.util.Locale.ROOT).startsWith(allowed.toLowerCase(java.util.Locale.ROOT))) {
-                return; // whitelisted
-            }
+        if (HumanVerifyPlugin.isWhitelistedCommand(msg, plugin.getCommandWhitelist())) {
+            return; // whitelisted
         }
         event.setCancelled(true);
         plugin.scheduleForPlayer(player, () ->
