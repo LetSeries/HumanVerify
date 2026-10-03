@@ -274,6 +274,11 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
         return Math.max(1L, configured);
     }
 
+    /** Verification timeout in ticks: config seconds clamped to >= 5, converted at 20 ticks/s. */
+    static long timeoutTicks(long timeoutSeconds) {
+        return Math.max(1L, Duration.ofSeconds(Math.max(5L, timeoutSeconds)).toSeconds() * 20L);
+    }
+
     // ================================================================================
     //  Grid geometry helpers (package-visible, static for testing)
     // ================================================================================
@@ -356,13 +361,15 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
             case COUNT    -> new ArrayList<>(slots.subList(0, targetCount));
             case CENTER   -> List.of(centerSlot(size));
             case CORNER   -> List.of(cornerSlot(size, ThreadLocalRandom.current()));
+            // COLOR / MATERIAL / ODD_ONE_OUT: single target at slots.get(0)
+            // (RANDOM is already resolved by selectMode(); default is a safety fallback)
+            case COLOR, MATERIAL, ODD_ONE_OUT -> List.of(slots.get(0));
             default       -> List.of(slots.get(0));
         };
 
         for (int slot : slots) {
             int step = expectedSlots.indexOf(slot);
-            boolean oddOneOut = mode == ChallengeMode.ODD_ONE_OUT && slot == slots.get(0);
-            inventory.setItem(slot, createButton(mode, step < 0 ? (oddOneOut ? 1 : 0) : step + 1));
+            inventory.setItem(slot, createButton(mode, step < 0 ? 0 : step + 1));
         }
 
         CompletableFuture<VerificationResult> future = new CompletableFuture<>();
@@ -376,7 +383,7 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
         }, 0L);
 
         // Timeout
-        long timeoutTicks = Math.max(1L, Duration.ofSeconds(Math.max(5, getConfig().getLong("timeout-seconds", 60))).toSeconds() * 20L);
+        long timeoutTicks = timeoutTicks(getConfig().getLong("timeout-seconds", 60));
         scheduleForPlayer(player, () -> {
             CaptchaSession current = sessions.get(player.getUniqueId());
             if (current == session && !session.isCompleted()) {

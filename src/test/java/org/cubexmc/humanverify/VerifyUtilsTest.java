@@ -155,4 +155,19 @@ class VerifyUtilsTest {
         assertEquals(20L, HumanVerifyPlugin.normalizeRetryDelay(20L));
         assertEquals(100L, HumanVerifyPlugin.normalizeRetryDelay(100L));
     }
+
+    // --- timeoutTicks ---
+
+    @Test
+    void timeoutTicksConvertsSecondsAt20Tps() {
+        assertEquals(60L * 20L, HumanVerifyPlugin.timeoutTicks(60L));
+        assertEquals(5L * 20L, HumanVerifyPlugin.timeoutTicks(5L));
+    }
+
+    @Test
+    void timeoutTicksClampsSmallValuesToFiveSeconds() {
+        assertEquals(5L * 20L, HumanVerifyPlugin.timeoutTicks(0L));
+        assertEquals(5L * 20L, HumanVerifyPlugin.timeoutTicks(-10L));
+        assertEquals(5L * 20L, HumanVerifyPlugin.timeoutTicks(4L));
+    }
 }
