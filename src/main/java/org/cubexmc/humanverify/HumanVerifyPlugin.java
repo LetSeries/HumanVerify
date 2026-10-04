@@ -362,6 +362,23 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
         }
         if (force) verified.remove(player.getUniqueId());
 
+        if (!force) {
+            // Idempotent reuse: an active session must NOT be replaced here.
+            // Otherwise a player with 2/3 wrong attempts could just run
+            // /humanverify verify to get a fresh puzzle with full attempts.
+            CaptchaSession active = sessions.get(player.getUniqueId());
+            if (active != null && !active.isCompleted()) {
+                retryPending.remove(player.getUniqueId());
+                scheduleForPlayer(player, () -> {
+                    CaptchaSession current = sessions.get(player.getUniqueId());
+                    if (current == active && !active.isCompleted() && player.isOnline()) {
+                        player.openInventory(active.getHolder().getInventory());
+                    }
+                }, 0L);
+                return active.getFuture();
+            }
+        }
+
         // Cancel any existing session
         CaptchaSession previous = sessions.remove(player.getUniqueId());
         if (previous != null) {
@@ -584,11 +601,13 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
         } else {
             // RETRY: re-open verification after a short delay.
             // Mark pending immediately so freezing stays active during the delay.
+            // Non-force call: if a session was created meanwhile (e.g. admin
+            // command), it is reused instead of being replaced.
             retryPending.add(player.getUniqueId());
             player.sendMessage(message("retry"));
             scheduleForPlayer(player, () -> {
                 if (player.isOnline() && !isVerified(player)) {
-                    requestVerification(player, true);
+                    requestVerification(player);
                 } else {
                     retryPending.remove(player.getUniqueId());
                 }

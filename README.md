@@ -54,7 +54,7 @@ org.cubexmc.humanverify.api.HumanVerifyEvent
 org.cubexmc.humanverify.api.VerificationResult
 ```
 
-普通的 `requestVerification(player)` 是幂等调用：玩家已经在本次在线会话中通过验证时，会直接返回 `SUCCESS`，不会重复打开界面。需要让玩家再次完成验证时，使用 `requestVerification(player, true)`。
+普通的 `requestVerification(player)` 是幂等调用：玩家已经在本次在线会话中通过验证时，会直接返回 `SUCCESS`，不会重复打开界面；玩家已有未完成的验证时，会复用该会话（重新打开同一界面，**不会**重置错误次数）。需要让玩家再次完成验证时，使用 `requestVerification(player, true)`。
 
 其他插件应在 `plugin.yml` 中声明依赖，确保 HumanVerify 先加载：
 
