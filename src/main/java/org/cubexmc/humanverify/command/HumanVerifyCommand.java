@@ -1,7 +1,6 @@
 package org.cubexmc.humanverify.command;
 
 import org.cubexmc.humanverify.HumanVerifyPlugin;
-import org.cubexmc.humanverify.api.VerificationResult;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
 import org.bukkit.command.Command;
@@ -39,12 +38,9 @@ public final class HumanVerifyCommand implements CommandExecutor, TabCompleter {
                 sender.sendMessage(plugin.message("already-verified"));
                 return true;
             }
-            plugin.requestVerification(player).thenAccept(result -> {
-                if (result == VerificationResult.CANCELLED && player.isOnline()) {
-                    plugin.scheduleForPlayer(player, () ->
-                            player.sendMessage(plugin.message("failed")), 1L);
-                }
-            });
+            // Non-force call reuses the active session when one exists
+            // (no attempt reset); terminal states are messaged by the plugin itself.
+            plugin.requestVerification(player);
             return true;
         }
 
