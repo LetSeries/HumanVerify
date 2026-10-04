@@ -29,6 +29,11 @@ public final class HumanVerifyCommand implements CommandExecutor, TabCompleter {
                 sender.sendMessage(ChatColor.RED + "控制台请使用 /humanverify verify <玩家>。");
                 return true;
             }
+            // Self-service verify requires the declared command permission.
+            if (!player.hasPermission("humanverify.use")) {
+                player.sendMessage(ChatColor.RED + "你没有权限使用此命令。");
+                return true;
+            }
             // Bypass permission: inform and skip
             if (player.hasPermission("humanverify.bypass")) {
                 player.sendMessage(plugin.message("bypassed"));

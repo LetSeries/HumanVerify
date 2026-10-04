@@ -9,14 +9,22 @@ import org.bukkit.event.block.BlockBreakEvent;
 import org.bukkit.event.block.BlockPlaceEvent;
 import org.bukkit.event.entity.EntityDamageByEntityEvent;
 import org.bukkit.event.entity.EntityDamageEvent;
+import org.bukkit.event.entity.EntityPickupItemEvent;
+import org.bukkit.event.entity.EntityToggleGlideEvent;
 import org.bukkit.event.inventory.InventoryClickEvent;
 import org.bukkit.event.inventory.InventoryDragEvent;
 import org.bukkit.event.player.AsyncPlayerChatEvent;
 import org.bukkit.event.player.PlayerCommandPreprocessEvent;
+import org.bukkit.event.player.PlayerArmorStandManipulateEvent;
 import org.bukkit.event.player.PlayerDropItemEvent;
 import org.bukkit.event.player.PlayerInteractEntityEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
+import org.bukkit.event.player.PlayerItemConsumeEvent;
 import org.bukkit.event.player.PlayerMoveEvent;
+import org.bukkit.event.player.PlayerSwapHandItemsEvent;
+import org.bukkit.event.player.PlayerTeleportEvent;
+import org.bukkit.event.player.PlayerToggleFlightEvent;
+import org.bukkit.event.vehicle.VehicleEnterEvent;
 import org.bukkit.inventory.CraftingInventory;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.InventoryHolder;
@@ -160,6 +168,79 @@ public final class VerificationEnforcer implements Listener {
         if (holder instanceof org.cubexmc.humanverify.core.CaptchaHolder) return;
 
         event.setCancelled(true);
+    }
+
+    /* ---------------------------------------------------------------
+     * Movement — teleport, flight, glide, vehicles
+     * --------------------------------------------------------------- */
+
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    public void onTeleport(PlayerTeleportEvent event) {
+        if (!plugin.isFreezeMovement()) return;
+        if (plugin.isPendingVerification(event.getPlayer())) {
+            event.setCancelled(true);
+        }
+    }
+
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    public void onToggleFlight(PlayerToggleFlightEvent event) {
+        if (!plugin.isFreezeMovement()) return;
+        if (event.isFlying() && plugin.isPendingVerification(event.getPlayer())) {
+            event.setCancelled(true);
+        }
+    }
+
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    public void onToggleGlide(EntityToggleGlideEvent event) {
+        if (!plugin.isFreezeMovement()) return;
+        if (!(event.getEntity() instanceof Player player)) return;
+        if (event.isGliding() && plugin.isPendingVerification(player)) {
+            event.setCancelled(true);
+        }
+    }
+
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    public void onVehicleEnter(VehicleEnterEvent event) {
+        if (!plugin.isFreezeMovement()) return;
+        if (event.getEntered() instanceof Player player && plugin.isPendingVerification(player)) {
+            event.setCancelled(true);
+        }
+    }
+
+    /* ---------------------------------------------------------------
+     * Inventory extras — swap hands, armor stands, consume, pickup
+     * --------------------------------------------------------------- */
+
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    public void onSwapHands(PlayerSwapHandItemsEvent event) {
+        if (!plugin.isFreezeInteract()) return;
+        if (plugin.isPendingVerification(event.getPlayer())) {
+            event.setCancelled(true);
+        }
+    }
+
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    public void onArmorStandManipulate(PlayerArmorStandManipulateEvent event) {
+        if (!plugin.isFreezeInteract()) return;
+        if (plugin.isPendingVerification(event.getPlayer())) {
+            event.setCancelled(true);
+        }
+    }
+
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    public void onConsume(PlayerItemConsumeEvent event) {
+        if (!plugin.isFreezeInteract()) return;
+        if (plugin.isPendingVerification(event.getPlayer())) {
+            event.setCancelled(true);
+        }
+    }
+
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    public void onPickup(EntityPickupItemEvent event) {
+        if (!plugin.isFreezeInteract()) return;
+        if (event.getEntity() instanceof Player player && plugin.isPendingVerification(player)) {
+            event.setCancelled(true);
+        }
     }
 
     /* ---------------------------------------------------------------
