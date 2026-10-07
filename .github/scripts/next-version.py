@@ -1,13 +1,14 @@
-"""Compute or set the project patch version from pom.xml.
+"""Compute or set the project version from pom.xml.
 
 The project <version> is anchored to the block following
 <artifactId>human-verify</artifactId> so parent/modelVersion tags
 can never be matched by accident.
 
 Modes:
-    python3 next-version.py <run-number>
-        Compute current -> next patch version, print results and
-        append current=/new=/tag= to $GITHUB_OUTPUT when set.
+    python3 next-version.py <run-number> [--minor]
+        Compute current -> next version (patch bump by default,
+        minor bump with --minor), print results and append
+        current=/new=/tag=/bump= to $GITHUB_OUTPUT when set.
 
     python3 next-version.py --write <new-version>
         Rewrite the project version in pom.xml (fails unless
@@ -44,6 +45,14 @@ def next_patch(current: str) -> str:
     return f"{major}.{minor}.{patch + 1}"
 
 
+def next_minor(current: str) -> str:
+    base = current.split("-")[0]
+    if not VERSION_RE.fullmatch(base):
+        raise SystemExit(f"unexpected project version format: {current!r}")
+    major, minor, _ = (int(part) for part in base.split("."))
+    return f"{major}.{minor + 1}.0"
+
+
 def write_version(pom: str, new: str) -> str:
     if not VERSION_RE.fullmatch(new.split("-")[0]):
         raise SystemExit(f"refusing to write invalid version: {new!r}")
@@ -71,13 +80,15 @@ def main() -> None:
             fh.write(updated)
         print(f"pom version -> {new}")
         return
-    if len(sys.argv) != 2 or sys.argv[1] == "--write":
-        raise SystemExit("usage: next-version.py <run-number> | next-version.py --write <new-version>")
+    if len(sys.argv) < 2 or sys.argv[1] == "--write":
+        raise SystemExit("usage: next-version.py <run-number> [--minor] | next-version.py --write <new-version>")
+    minor = len(sys.argv) > 2 and sys.argv[2] == "--minor"
     current = current_version(read_pom())
-    new = next_patch(current)
+    new = next_minor(current) if minor else next_patch(current)
     emit("current", current)
     emit("new", new)
     emit("tag", f"v{new}-b{sys.argv[1]}")
+    emit("bump", "minor" if minor else "patch")
 
 
 if __name__ == "__main__":

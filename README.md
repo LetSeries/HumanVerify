@@ -17,7 +17,7 @@
 - 玩家进入服务器后自动打开验证界面。
 - 9 至 54 格背包（9 的倍数，`challenge-size` 可配，默认 27 格）中随机放置目标方块，玩家点击正确方块即可通过。
 - 支持验证超时与错误次数限制。
-- 支持多种验证方式：唯一颜色方块、唯一材质方块、按编号顺序点击方块、点击指定数量目标方块、找出唯一不同方块、点击中心或角落方块；可固定模式或随机选择。
+- 支持多种验证方式：唯一颜色方块、唯一材质方块、按编号顺序点击方块、点击指定数量目标方块、找出唯一不同方块、点击中心或角落方块、算术题、倒序点击、整行点击；可固定模式或随机选择。
 - **验证期间冻结**：未验证玩家无法移动、交互、挖掘、放置、攻击、受伤、丢弃物品、聊天、使用指令（均可独立配置开关）。
 - **失败/超时动作可配**：验证失败或超时后自动重开新验证（`RETRY`，默认）或踢出服务器（`KICK`），踢出消息可自定义。
 - 通过 Bukkit `ServicesManager` 暴露公共 API，其他插件无需依赖实现包即可调用。
@@ -187,10 +187,11 @@ public final class VerifyListener implements Listener {
 - `timeout-seconds`
 - `max-attempts`
 - `challenge-size`
-- `verification-mode`：`COLOR`、`MATERIAL`、`SEQUENCE`、`COUNT`、`ODD_ONE_OUT`、`CENTER`、`CORNER` 或 `RANDOM`
+- `verification-mode`：`COLOR`、`MATERIAL`、`SEQUENCE`、`COUNT`、`ODD_ONE_OUT`、`CENTER`、`CORNER`、`MATH`、`REVERSE`、`LINE` 或 `RANDOM`
 - `enabled-modes`：`RANDOM` 模式可随机选择的模式列表
 - `target-material`、`sequence-material`
 - `sequence-length`、`target-count`
+- `math-max-sum`（默认 20）、`math-option-count`（默认 4，范围 2–9）
 - `count-material`、`odd-one-out-material`、`odd-one-out-target-material`
 - 三种按钮材质与消息文本
 
@@ -229,6 +230,9 @@ expire-kick-message: '&c验证超时，已被移出服务器。'
 - `ODD_ONE_OUT`：在一组相同材质的方块中找出唯一不同的方块。
 - `CENTER`：点击验证界面的中心位置方块。
 - `CORNER`：点击验证界面四个角落之一的目标方块。
+- `MATH`：计算 `a + b`（`math-max-sum` 控制和的上限，`math-option-count` 控制选项数），点击显示正确答案的按钮。
+- `REVERSE`：与 `SEQUENCE` 相反，按编号从大到小的顺序点击目标方块。
+- `LINE`：点击随机某一行的全部 9 个目标方块（任意顺序）。
 - `RANDOM`：每次验证从 `enabled-modes` 中随机选择一种方式；列表为空或配置无效时回退到 `COLOR`。
 
 例如，固定使用顺序验证：

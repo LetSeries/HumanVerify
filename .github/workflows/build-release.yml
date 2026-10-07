@@ -39,9 +39,17 @@ jobs:
           git checkout -B main origin/main
           git log --oneline -3
 
-      - name: Compute next patch version
+      - name: Compute next version
         id: version
-        run: python3 .github/scripts/next-version.py "$GITHUB_RUN_NUMBER"
+        run: |
+          # Commit message containing [minor] triggers a minor bump (x.y.z -> x.y+1.0).
+          MSG=$(git log -1 --pretty=%B)
+          echo "Head commit message: $MSG" | head -n 5
+          if echo "$MSG" | grep -qi '\[minor\]'; then
+            python3 .github/scripts/next-version.py "$GITHUB_RUN_NUMBER" --minor
+          else
+            python3 .github/scripts/next-version.py "$GITHUB_RUN_NUMBER"
+          fi
 
       - name: Set pom version
         run: |
@@ -72,7 +80,7 @@ jobs:
           if git diff --cached --quiet; then
             echo "No pom changes to commit."
           else
-            git commit -m "chore(release): bump version to ${{ steps.version.outputs.new }} [skip ci]"
+            git commit -m "chore(release): bump ${{ steps.version.outputs.bump }} version to ${{ steps.version.outputs.new }} [skip ci]"
             PUSHED=false
             for i in 1 2 3; do
               git fetch origin main
