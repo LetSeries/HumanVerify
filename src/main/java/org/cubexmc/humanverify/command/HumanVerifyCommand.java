@@ -69,7 +69,18 @@ public final class HumanVerifyCommand implements CommandExecutor, TabCompleter {
             sender.sendMessage(ChatColor.RED + "你没有权限验证其他玩家。");
             return true;
         }
-        Player target = Bukkit.getPlayerExact(playerName);
+        // Case-insensitive lookup: getPlayerExact is case-sensitive on some
+        // server implementations, so match online players ourselves first.
+        Player target = null;
+        for (Player online : Bukkit.getOnlinePlayers()) {
+            if (online.getName().equalsIgnoreCase(playerName)) {
+                target = online;
+                break;
+            }
+        }
+        if (target == null) {
+            target = Bukkit.getPlayerExact(playerName);
+        }
         if (target == null) {
             sender.sendMessage(plugin.message("player-not-found").replace("{player}", playerName));
             return true;

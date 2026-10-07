@@ -334,10 +334,17 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
     }
 
     /** Returns true when the player has an active (unfinished) session and is not yet verified. */
+    @Override
+    public boolean isPendingVerification(UUID playerId) {
+        if (playerId == null) return false;
+        return (sessions.containsKey(playerId) || retryPending.contains(playerId)) && !verified.contains(playerId);
+    }
+
+    /** Returns true when the player has an active (unfinished) session and is not yet verified. */
+    @Override
     public boolean isPendingVerification(Player player) {
         if (player == null) return false;
-        UUID id = player.getUniqueId();
-        return (sessions.containsKey(id) || retryPending.contains(id)) && !verified.contains(id);
+        return isPendingVerification(player.getUniqueId());
     }
 
     @Override
