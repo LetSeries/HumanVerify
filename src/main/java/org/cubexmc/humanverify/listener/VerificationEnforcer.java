@@ -16,10 +16,16 @@ import org.bukkit.event.inventory.InventoryDragEvent;
 import org.bukkit.event.player.AsyncPlayerChatEvent;
 import org.bukkit.event.player.PlayerCommandPreprocessEvent;
 import org.bukkit.event.player.PlayerArmorStandManipulateEvent;
+import org.bukkit.event.player.PlayerBedEnterEvent;
+import org.bukkit.event.player.PlayerBucketEmptyEvent;
+import org.bukkit.event.player.PlayerBucketFillEvent;
 import org.bukkit.event.player.PlayerDropItemEvent;
+import org.bukkit.event.player.PlayerFishEvent;
 import org.bukkit.event.player.PlayerInteractEntityEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.event.player.PlayerItemConsumeEvent;
+import org.bukkit.event.player.PlayerShearEntityEvent;
+import org.bukkit.event.player.PlayerUnleashEntityEvent;
 import org.bukkit.event.player.PlayerMoveEvent;
 import org.bukkit.event.player.PlayerSwapHandItemsEvent;
 import org.bukkit.event.player.PlayerTeleportEvent;
@@ -239,6 +245,62 @@ public final class VerificationEnforcer implements Listener {
     public void onPickup(EntityPickupItemEvent event) {
         if (!plugin.isFreezeInteract()) return;
         if (event.getEntity() instanceof Player player && plugin.isPendingVerification(player)) {
+            event.setCancelled(true);
+        }
+    }
+
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    public void onBedEnter(PlayerBedEnterEvent event) {
+        if (!plugin.isFreezeInteract()) return;
+        if (plugin.isPendingVerification(event.getPlayer())) {
+            event.setCancelled(true);
+        }
+    }
+
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    public void onBucketFill(PlayerBucketFillEvent event) {
+        if (!plugin.isFreezeInteract()) return;
+        if (plugin.isPendingVerification(event.getPlayer())) {
+            event.setCancelled(true);
+        }
+    }
+
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    public void onBucketEmpty(PlayerBucketEmptyEvent event) {
+        if (!plugin.isFreezeInteract()) return;
+        if (plugin.isPendingVerification(event.getPlayer())) {
+            event.setCancelled(true);
+        }
+    }
+
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    public void onFish(PlayerFishEvent event) {
+        if (!plugin.isFreezeInteract()) return;
+        if (plugin.isPendingVerification(event.getPlayer())) {
+            event.setCancelled(true);
+        }
+    }
+
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    public void onShear(PlayerShearEntityEvent event) {
+        if (!plugin.isFreezeInteract()) return;
+        if (plugin.isPendingVerification(event.getPlayer())) {
+            event.setCancelled(true);
+        }
+    }
+
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    public void onUnleash(PlayerUnleashEntityEvent event) {
+        if (!plugin.isFreezeInteract()) return;
+        if (plugin.isPendingVerification(event.getPlayer())) {
+            event.setCancelled(true);
+        }
+    }
+
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    public void onLeash(org.bukkit.event.entity.PlayerLeashEntityEvent event) {
+        if (!plugin.isFreezeInteract()) return;
+        if (plugin.isPendingVerification(event.getPlayer())) {
             event.setCancelled(true);
         }
     }
