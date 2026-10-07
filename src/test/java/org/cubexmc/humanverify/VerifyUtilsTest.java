@@ -201,4 +201,52 @@ class VerifyUtilsTest {
         assertTrue(HumanVerifyPlugin.isWhitelistedCommand("/login", List.of("login")));
         assertTrue(HumanVerifyPlugin.isWhitelistedCommand("/login foo", List.of("login")));
     }
+
+    // --- lineSlots ---
+
+    @Test
+    void lineSlotsReturnsFullRow() {
+        assertEquals(List.of(0, 1, 2, 3, 4, 5, 6, 7, 8), HumanVerifyPlugin.lineSlots(27, 3, 0));
+        assertEquals(List.of(9, 10, 11, 12, 13, 14, 15, 16, 17), HumanVerifyPlugin.lineSlots(27, 3, 1));
+        assertEquals(List.of(18, 19, 20, 21, 22, 23, 24, 25, 26), HumanVerifyPlugin.lineSlots(27, 3, 2));
+    }
+
+    @Test
+    void lineSlotsClampsRowIntoRange() {
+        assertEquals(HumanVerifyPlugin.lineSlots(27, 3, 0), HumanVerifyPlugin.lineSlots(27, 3, -5));
+        assertEquals(HumanVerifyPlugin.lineSlots(27, 3, 2), HumanVerifyPlugin.lineSlots(27, 3, 99));
+    }
+
+    // --- reverseSlots ---
+
+    @Test
+    void reverseSlotsAreDescending() {
+        List<Integer> drawn = List.of(5, 40, 13, 27, 9);
+        // First 3 drawn [5, 40, 13], sorted descending
+        assertEquals(List.of(40, 13, 5), HumanVerifyPlugin.reverseSlots(drawn, 3));
+        assertEquals(List.of(40, 27, 13, 9, 5), HumanVerifyPlugin.reverseSlots(drawn, 5));
+    }
+
+    // --- buildMathChallenge ---
+
+    @Test
+    void mathChallengeAnswerIsInOptions() {
+        Random rng = new Random(7);
+        for (int i = 0; i < 50; i++) {
+            HumanVerifyPlugin.MathChallenge c = HumanVerifyPlugin.buildMathChallenge(20, 4, rng);
+            assertTrue(c.options().contains(c.answer()), "answer missing from options");
+            assertEquals(4, c.options().size());
+            assertEquals(c.options().size(), new java.util.HashSet<>(c.options()).size(), "duplicate options");
+        }
+    }
+
+    @Test
+    void mathChallengeRespectsMaxSum() {
+        Random rng = new Random(13);
+        for (int i = 0; i < 50; i++) {
+            HumanVerifyPlugin.MathChallenge c = HumanVerifyPlugin.buildMathChallenge(10, 3, rng);
+            assertTrue(c.answer() >= 2 && c.answer() <= 10, "answer out of range: " + c.answer());
+            assertTrue(c.question().contains(" + "), "question format: " + c.question());
+        }
+    }
 }

@@ -33,6 +33,8 @@ import org.bukkit.plugin.java.JavaPlugin;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -64,6 +66,10 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
     // -- Mode config ----------------------------------------------------------------
     private ChallengeMode configuredMode;
     private List<ChallengeMode> enabledModes;
+    private int mathMaxSum;
+    private int mathOptionCount;
+    // Per-session MATH data: question text + option slot -> displayed number.
+    private final Map<UUID, MathChallenge> mathChallenges = new ConcurrentHashMap<>();
 
     // -- Enforcement config ---------------------------------------------------------
     private boolean freezeUnverified;
@@ -119,6 +125,7 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
             finish(session, VerificationResult.CANCELLED, false);
         }
         sessions.clear();
+        mathChallenges.clear();
         retryPending.clear();
         Bukkit.getServicesManager().unregister(HumanVerifyApi.class, this);
     }
@@ -137,9 +144,9 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
         var cfg = getConfig();
         boolean changed = false;
 
-        // v2 defaults
+        // v3 defaults
         if (!cfg.isSet("config-version")) {
-            cfg.set("config-version", 2);
+            cfg.set("config-version", 3);
             changed = true;
         }
 
@@ -153,17 +160,22 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
         changed |= setDefault(cfg, "fail-action", "RETRY");
         changed |= setDefault(cfg, "expire-action", "RETRY");
         changed |= setDefault(cfg, "retry-delay-ticks", 20L);
+        changed |= setDefault(cfg, "math-max-sum", 20);
+        changed |= setDefault(cfg, "math-option-count", 4);
         changed |= setDefault(cfg, "fail-kick-message", "&c验证失败次数过多，已被移出服务器。");
         changed |= setDefault(cfg, "expire-kick-message", "&c验证超时，已被移出服务器。");
         changed |= setDefault(cfg, "messages.bypassed", "&a你拥有验证豁免权限，无需验证。");
         changed |= setDefault(cfg, "messages.retry", "&e验证未通过，已为你重新开始验证。");
         changed |= setDefault(cfg, "messages.frozen-chat", "&c验证完成前无法聊天。");
         changed |= setDefault(cfg, "messages.frozen-command", "&c验证完成前无法使用指令。");
+        changed |= setDefault(cfg, "messages.instructions-math", "&7计算 &e{question} &7，点击 &a正确答案&7。");
+        changed |= setDefault(cfg, "messages.instructions-reverse", "&7请按 &e从大到小&7 的顺序点击目标方块。");
+        changed |= setDefault(cfg, "messages.instructions-line", "&7请点击 &a同一行&7 的所有目标方块。");
 
         if (changed) {
-            cfg.set("config-version", 2);
+            cfg.set("config-version", 3);
             saveConfig();
-            getLogger().info("Configuration migrated to version 2 (new defaults written).");
+            getLogger().info("Configuration migrated to version 3 (new defaults written).");
         }
     }
 
@@ -190,6 +202,10 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
 
         configuredMode = parseMode(cfg.getString("verification-mode", "RANDOM"));
         enabledModes   = resolveEnabledModes(cfg.getStringList("enabled-modes"));
+
+        // MATH options
+        mathMaxSum     = Math.max(4, cfg.getInt("math-max-sum", 20));
+        mathOptionCount = Math.max(2, Math.min(9, cfg.getInt("math-option-count", 4)));
 
         // Enforcement
         freezeUnverified = cfg.getBoolean("freeze-unverified", true);
@@ -284,6 +300,41 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
     static long timeoutTicks(long timeoutSeconds) {
         return Math.max(1L, Duration.ofSeconds(Math.max(5L, timeoutSeconds)).toSeconds() * 20L);
     }
+
+    /** One row of slots for LINE mode; row is clamped into range. */
+    static List<Integer> lineSlots(int size, int rows, int row) {
+        int safeRow = Math.max(0, Math.min(rows - 1, row));
+        List<Integer> slots = new ArrayList<>();
+        for (int col = 0; col < 9; col++) slots.add(safeRow * 9 + col);
+        return List.copyOf(slots);
+    }
+
+    /** Descending-order target slots for REVERSE mode (largest first). */
+    static List<Integer> reverseSlots(List<Integer> drawn, int sequenceLength) {
+        List<Integer> ordered = new ArrayList<>(drawn.subList(0, sequenceLength));
+        ordered.sort(Collections.reverseOrder());
+        return List.copyOf(ordered);
+    }
+
+    /** Build a MATH challenge: a+b question plus distinct answer options containing the sum. */
+    static MathChallenge buildMathChallenge(int maxSum, int optionCount, java.util.Random rng) {
+        int safeMax = Math.max(4, maxSum);
+        int safeOptions = Math.max(2, Math.min(9, optionCount));
+        int a = 1 + rng.nextInt(Math.max(1, safeMax - 1));
+        int b = 1 + rng.nextInt(Math.max(1, safeMax - a));
+        int answer = a + b;
+        LinkedHashSet<Integer> options = new LinkedHashSet<>();
+        options.add(answer);
+        int guard = 0;
+        while (options.size() < safeOptions && guard++ < 200) {
+            int wrong = 1 + rng.nextInt(safeMax + 3);
+            if (wrong != answer) options.add(wrong);
+        }
+        return new MathChallenge(a + " + " + b + " = ?", answer, List.copyOf(options));
+    }
+
+    /** Immutable MATH challenge data shared with the GUI renderer. */
+    record MathChallenge(String question, int answer, List<Integer> options) { }
 
     /**
      * Whitelist check for frozen commands. Matches on the command word only:
@@ -405,21 +456,42 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
         ChallengeMode mode = selectMode();
         int sequenceLength = Math.max(2, Math.min(size, getConfig().getInt("sequence-length", 3)));
         int targetCount    = Math.max(1, Math.min(size - 1, getConfig().getInt("target-count", 3)));
+        ThreadLocalRandom rng = ThreadLocalRandom.current();
+        MathChallenge mathChallenge = null;
 
         List<Integer> expectedSlots = switch (mode) {
             case SEQUENCE -> new ArrayList<>(slots.subList(0, sequenceLength));
             case COUNT    -> new ArrayList<>(slots.subList(0, targetCount));
             case CENTER   -> List.of(centerSlot(size));
-            case CORNER   -> List.of(cornerSlot(size, ThreadLocalRandom.current()));
+            case CORNER   -> List.of(cornerSlot(size, rng));
+            case REVERSE  -> reverseSlots(slots, sequenceLength);
+            case LINE     -> new ArrayList<>(lineSlots(size, size / 9, rng.nextInt(size / 9)));
+            case MATH     -> {
+                mathChallenge = buildMathChallenge(mathMaxSum, mathOptionCount, rng);
+                mathChallenges.put(player.getUniqueId(), mathChallenge);
+                // The correct slot is the one displaying the answer number.
+                int answerPos = mathChallenge.options().indexOf(mathChallenge.answer());
+                yield List.of(slots.get(answerPos));
+            }
             // COLOR / MATERIAL / ODD_ONE_OUT: single target at slots.get(0)
             // (RANDOM is already resolved by selectMode(); default is a safety fallback)
             case COLOR, MATERIAL, ODD_ONE_OUT -> List.of(slots.get(0));
             default       -> List.of(slots.get(0));
         };
 
+        // MATH options are rendered as numbers; map each option slot to its number.
+        Map<Integer, Integer> mathSlotNumbers = new HashMap<>();
+        if (mode == ChallengeMode.MATH && mathChallenge != null) {
+            List<Integer> options = mathChallenge.options();
+            for (int i = 0; i < options.size(); i++) {
+                mathSlotNumbers.put(slots.get(i), options.get(i));
+            }
+        }
+
         for (int slot : slots) {
             int step = expectedSlots.indexOf(slot);
-            inventory.setItem(slot, createButton(mode, step < 0 ? 0 : step + 1));
+            inventory.setItem(slot, createButton(mode, step < 0 ? 0 : step + 1,
+                    mathSlotNumbers.getOrDefault(slot, 0), mathChallenge));
         }
 
         CompletableFuture<VerificationResult> future = new CompletableFuture<>();
@@ -497,8 +569,9 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
         int slot = event.getRawSlot();
         if (slot < 0 || slot >= event.getView().getTopInventory().getSize()) return;
 
-        // --- COUNT mode: arbitrary order ---
-        if (session.getMode() == ChallengeMode.COUNT && session.isExpectedSlot(slot)) {
+        // --- COUNT / LINE modes: arbitrary order ---
+        if ((session.getMode() == ChallengeMode.COUNT || session.getMode() == ChallengeMode.LINE)
+                && session.isExpectedSlot(slot)) {
             if (session.advance(slot)) {
                 verified.add(player.getUniqueId());
                 player.sendMessage(message("success"));
@@ -513,8 +586,9 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
             return;
         }
 
-        // --- SEQUENCE / single-target modes: strict order ---
-        if (session.getMode() != ChallengeMode.COUNT && slot == session.getExpectedSlot()) {
+        // --- SEQUENCE / REVERSE / single-target modes: strict order ---
+        if (session.getMode() != ChallengeMode.COUNT && session.getMode() != ChallengeMode.LINE
+                && slot == session.getExpectedSlot()) {
             if (session.advance()) {
                 verified.add(player.getUniqueId());
                 player.sendMessage(message("success"));
@@ -530,7 +604,8 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
 
         // --- Wrong click ---
         int attempts = session.registerWrongAttempt();
-        if (session.getMode() != ChallengeMode.SEQUENCE && session.getMode() != ChallengeMode.COUNT) {
+        if (session.getMode() != ChallengeMode.SEQUENCE && session.getMode() != ChallengeMode.REVERSE
+                && session.getMode() != ChallengeMode.COUNT && session.getMode() != ChallengeMode.LINE) {
             event.getView().getTopInventory().setItem(slot, createWrongButton());
         }
         player.sendMessage(message("wrong").replace("{remaining}", String.valueOf(session.getRemainingAttempts())));
@@ -643,6 +718,7 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
     private void finish(CaptchaSession session, VerificationResult result, boolean closeInventory) {
         if (!session.complete(result)) return;
         sessions.remove(session.getPlayerId(), session);
+        mathChallenges.remove(session.getPlayerId());
 
         if (closeInventory && session.getPlayer() != null && session.getPlayer().isOnline()) {
             scheduleForPlayer(session.getPlayer(), () -> {
@@ -667,11 +743,18 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
     // ================================================================================
 
     private ItemStack createButton(ChallengeMode mode, int step) {
+        return createButton(mode, step, 0, null);
+    }
+
+    private ItemStack createButton(ChallengeMode mode, int step, int mathNumber, MathChallenge mathChallenge) {
         boolean target = step > 0;
         Material material = switch (mode) {
             case MATERIAL     -> target ? targetMaterial : buttonMaterial;
             case SEQUENCE     -> target ? sequenceMaterial : buttonMaterial;
+            case REVERSE      -> target ? sequenceMaterial : buttonMaterial;
             case COUNT        -> target ? countMaterial : buttonMaterial;
+            case LINE         -> target ? countMaterial : buttonMaterial;
+            case MATH         -> buttonMaterial;
             case ODD_ONE_OUT  -> target ? oddOneOutTargetMaterial : oddOneOutMaterial;
             case CENTER, CORNER -> target ? correctMaterial : buttonMaterial;
             case COLOR        -> target ? correctMaterial : buttonMaterial;
@@ -680,13 +763,23 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
         ItemStack item = new ItemStack(material);
         ItemMeta meta = item.getItemMeta();
         if (meta != null) {
-            String name = target
-                    ? (mode == ChallengeMode.SEQUENCE || mode == ChallengeMode.COUNT
-                        ? ChatColor.YELLOW + (mode == ChallengeMode.COUNT ? "点击目标 " : "验证步骤 ") + step
-                        : ChatColor.GREEN + "点击这里")
-                    : ChatColor.WHITE + "验证按钮";
+            String name;
+            if (mode == ChallengeMode.MATH) {
+                // Option slots show their number; filler slots show the button label.
+                name = mathNumber > 0
+                        ? ChatColor.YELLOW + String.valueOf(mathNumber)
+                        : ChatColor.WHITE + "验证按钮";
+            } else {
+                name = target
+                        ? (mode == ChallengeMode.SEQUENCE || mode == ChallengeMode.REVERSE
+                            || mode == ChallengeMode.COUNT || mode == ChallengeMode.LINE
+                            ? ChatColor.YELLOW + (mode == ChallengeMode.COUNT || mode == ChallengeMode.LINE
+                                ? "点击目标 " : "验证步骤 ") + step
+                            : ChatColor.GREEN + "点击这里")
+                        : ChatColor.WHITE + "验证按钮";
+            }
             meta.displayName(legacy(name));
-            meta.lore(List.of(legacy(instructions(mode))));
+            meta.lore(List.of(legacy(instructions(mode, mathChallenge))));
             meta.addItemFlags(ItemFlag.HIDE_ATTRIBUTES);
             item.setItemMeta(meta);
         }
@@ -727,9 +820,16 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
     }
 
     private String instructions(ChallengeMode mode) {
+        return instructions(mode, null);
+    }
+
+    private String instructions(ChallengeMode mode, MathChallenge mathChallenge) {
         String key = "messages.instructions-" + mode.getConfigKey();
         String value = getConfig().getString(key);
         if (value == null) value = getConfig().getString("messages.instructions", "");
+        if (mode == ChallengeMode.MATH && mathChallenge != null) {
+            value = value.replace("{question}", mathChallenge.question());
+        }
         return color(value);
     }
 

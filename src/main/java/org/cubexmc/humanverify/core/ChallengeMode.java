@@ -8,7 +8,10 @@ public enum ChallengeMode {
     COUNT("count"),
     ODD_ONE_OUT("odd-one-out"),
     CENTER("center"),
-    CORNER("corner");
+    CORNER("corner"),
+    MATH("math"),
+    REVERSE("reverse"),
+    LINE("line");
 
     private final String configKey;
 

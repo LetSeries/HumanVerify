@@ -1,6 +1,6 @@
 # HumanVerify configuration
 # The plugin uses only Bukkit/Paper APIs and is marked Folia-compatible.
-config-version: 2
+config-version: 3
 auto-verify-on-join: true
 timeout-seconds: 60
 max-attempts: 3
@@ -15,6 +15,9 @@ enabled-modes:
   - ODD_ONE_OUT
   - CENTER
   - CORNER
+  - MATH
+  - REVERSE
+  - LINE
 target-material: DIAMOND
 sequence-material: YELLOW_WOOL
 sequence-length: 3
@@ -22,6 +25,10 @@ target-count: 3
 count-material: EMERALD
 odd-one-out-material: IRON_BLOCK
 odd-one-out-target-material: GOLD_BLOCK
+# MATH mode: random a+b question (1 <= a,b, a+b <= math-max-sum)
+# with math-option-count number buttons to choose from.
+math-max-sum: 20
+math-option-count: 4
 correct-material: LIME_WOOL
 wrong-material: RED_WOOL
 button-material: WHITE_WOOL
@@ -53,6 +60,9 @@ messages:
   instructions-odd-one-out: '&7找出唯一不同的方块。'
   instructions-center: '&7请点击界面正中心的方块。'
   instructions-corner: '&7请点击角落中的目标方块。'
+  instructions-math: '&7计算 &e{question} &7，点击 &a正确答案&7。'
+  instructions-reverse: '&7请按 &e从大到小&7 的顺序点击目标方块。'
+  instructions-line: '&7请点击 &a同一行&7 的所有目标方块。'
   sequence-progress: '&a步骤 {current} 正确，请继续。'
   count-progress: '&a已找到 {current}/{total} 个目标方块。'
   success: '&a验证成功，欢迎进入服务器！'
