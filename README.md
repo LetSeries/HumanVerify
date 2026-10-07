@@ -202,10 +202,10 @@ public final class VerifyListener implements Listener {
 |------|--------|----------|
 | `freeze-unverified` | `true` | 总开关，设为 `false` 关闭所有冻结 |
 | `freeze-movement` | `true` | 禁止移动（方块坐标变化）、传送、开启飞行/滑翔、乘骑载具 |
-| `freeze-interact` | `true` | 禁止交互、挖掘、放置、攻击、受伤、丢弃物品、换手、摆弄盔甲架、进食/饮用、拾取掉落物 |
+| `freeze-interact` | `true` | 禁止交互、挖掘、放置、攻击、受伤、丢弃物品、换手、摆弄盔甲架、进食/饮用、拾取掉落物、上床睡觉、用水桶装水/倒水、钓鱼、剪羊毛、拴绳/解绳 |
 | `freeze-chat` | `true` | 禁止聊天 |
 | `freeze-commands` | `true` | 禁止使用指令 |
-| `command-whitelist` | `[/login, /register]` | 白名单指令前缀，`freeze-commands=true` 时放行 |
+| `command-whitelist` | `[/login, /register]` | 白名单指令（按指令词精确匹配，如 `/login 密码` 放行，`/loginfoo` 拦截），`freeze-commands=true` 时放行 |
 
 ### 失败 / 超时动作
 
