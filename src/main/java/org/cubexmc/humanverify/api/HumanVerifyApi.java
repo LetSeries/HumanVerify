@@ -16,6 +16,13 @@ public interface HumanVerifyApi {
         return isVerified(player.getUniqueId());
     }
 
+    /** True when the player has an unfinished session (or is waiting for a delayed re-open) and is not verified. */
+    boolean isPendingVerification(UUID playerId);
+
+    default boolean isPendingVerification(Player player) {
+        return isPendingVerification(player.getUniqueId());
+    }
+
     CompletableFuture<VerificationResult> requestVerification(Player player);
 
     /** Starts a new challenge even when the player is already verified or bypassed. */
