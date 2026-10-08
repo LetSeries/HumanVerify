@@ -31,8 +31,10 @@ import org.bukkit.plugin.ServicePriority;
 import org.bukkit.plugin.java.JavaPlugin;
 
 import java.time.Duration;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Deque;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -84,8 +86,33 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
     private FailAction expireAction;
     private long retryDelayTicks;
 
+    // -- Difficulty escalation ------------------------------------------------------
+    private boolean difficultyEscalation;
+    private int escalationStep;
+    private int escalationMaxLevel;
+    private long escalationTimeoutPenalty;
+    private int escalationMathBonus;
+    private final Map<UUID, Integer> consecutiveFailures = new ConcurrentHashMap<>();
+
+    // -- Anti-script (click flood) ----------------------------------------------------
+    private boolean antiFlood;
+    private long clickWindowMs;
+    private int clickMaxClicks;
+    private final Map<UUID, Deque<Long>> clickWindows = new ConcurrentHashMap<>();
+
+    // -- Self-service verify cooldown -------------------------------------------------
+    private long verifyCooldownSeconds;
+    private final Map<UUID, Long> selfVerifyCooldown = new ConcurrentHashMap<>();
+
+    // -- IP-level protection ------------------------------------------------------------
+    // Counted on demand from live sessions + retry-waiting players (no extra bookkeeping).
+    private int maxPendingPerIp;
+
     // -- Shutdown flag (prevents RETRY/KICK during onDisable) -----------------------
     private volatile boolean shuttingDown;
+
+    /** Floor for escalation-reduced timeouts (seconds). */
+    private static final long MIN_ESCALATED_TIMEOUT_SECONDS = 15L;
 
     // ================================================================================
     //  Lifecycle
@@ -127,6 +154,7 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
         sessions.clear();
         mathChallenges.clear();
         retryPending.clear();
+        clickWindows.clear();
         Bukkit.getServicesManager().unregister(HumanVerifyApi.class, this);
     }
 
@@ -144,9 +172,9 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
         var cfg = getConfig();
         boolean changed = false;
 
-        // v3 defaults
+        // v4 defaults
         if (!cfg.isSet("config-version")) {
-            cfg.set("config-version", 3);
+            cfg.set("config-version", 4);
             changed = true;
         }
 
@@ -162,6 +190,20 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
         changed |= setDefault(cfg, "retry-delay-ticks", 20L);
         changed |= setDefault(cfg, "math-max-sum", 20);
         changed |= setDefault(cfg, "math-option-count", 4);
+        // v4: difficulty escalation (harder puzzles after consecutive failures)
+        changed |= setDefault(cfg, "difficulty-escalation", true);
+        changed |= setDefault(cfg, "escalation-fail-step", 2);
+        changed |= setDefault(cfg, "escalation-max-level", 3);
+        changed |= setDefault(cfg, "escalation-timeout-penalty", 10L);
+        changed |= setDefault(cfg, "escalation-math-bonus", 10);
+        // v4: anti-script (click flood)
+        changed |= setDefault(cfg, "anti-flood", true);
+        changed |= setDefault(cfg, "click-window-ms", 3000L);
+        changed |= setDefault(cfg, "click-max-clicks", 12);
+        // v4: self-service verify cooldown (seconds)
+        changed |= setDefault(cfg, "verify-cooldown-seconds", 10L);
+        // v4: max concurrent unverified players per IP (0 = unlimited)
+        changed |= setDefault(cfg, "max-pending-per-ip", 3);
         changed |= setDefault(cfg, "fail-kick-message", "&c验证失败次数过多，已被移出服务器。");
         changed |= setDefault(cfg, "expire-kick-message", "&c验证超时，已被移出服务器。");
         changed |= setDefault(cfg, "messages.bypassed", "&a你拥有验证豁免权限，无需验证。");
@@ -171,11 +213,15 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
         changed |= setDefault(cfg, "messages.instructions-math", "&7计算 &e{question} &7，点击 &a正确答案&7。");
         changed |= setDefault(cfg, "messages.instructions-reverse", "&7请按 &e从大到小&7 的顺序点击目标方块。");
         changed |= setDefault(cfg, "messages.instructions-line", "&7请点击 &a同一行&7 的所有目标方块。");
+        changed |= setDefault(cfg, "messages.escalated", "&e检测到多次失败，验证难度已提升至 &c{level} &e级。");
+        changed |= setDefault(cfg, "messages.flood", "&c点击过快，请放慢速度！剩余尝试次数：&e{remaining}");
+        changed |= setDefault(cfg, "messages.cooldown", "&c请 &e{seconds} &c秒后再重新验证。");
+        changed |= setDefault(cfg, "messages.ip-limit", "&c当前网络下待验证人数过多，请稍后再试。");
 
         if (changed) {
-            cfg.set("config-version", 3);
+            cfg.set("config-version", 4);
             saveConfig();
-            getLogger().info("Configuration migrated to version 3 (new defaults written).");
+            getLogger().info("Configuration migrated to version 4 (new defaults written).");
         }
     }
 
@@ -206,6 +252,24 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
         // MATH options
         mathMaxSum     = Math.max(4, cfg.getInt("math-max-sum", 20));
         mathOptionCount = Math.max(2, Math.min(9, cfg.getInt("math-option-count", 4)));
+
+        // Difficulty escalation
+        difficultyEscalation = cfg.getBoolean("difficulty-escalation", true);
+        escalationStep       = Math.max(1, cfg.getInt("escalation-fail-step", 2));
+        escalationMaxLevel   = Math.max(0, cfg.getInt("escalation-max-level", 3));
+        escalationTimeoutPenalty = Math.max(0L, cfg.getLong("escalation-timeout-penalty", 10L));
+        escalationMathBonus  = Math.max(0, cfg.getInt("escalation-math-bonus", 10));
+
+        // Anti-script (click flood)
+        antiFlood      = cfg.getBoolean("anti-flood", true);
+        clickWindowMs  = Math.max(500L, cfg.getLong("click-window-ms", 3000L));
+        clickMaxClicks = Math.max(3, cfg.getInt("click-max-clicks", 12));
+
+        // Self-service verify cooldown
+        verifyCooldownSeconds = Math.max(0L, cfg.getLong("verify-cooldown-seconds", 10L));
+
+        // IP-level protection (0 = unlimited)
+        maxPendingPerIp = Math.max(0, cfg.getInt("max-pending-per-ip", 3));
 
         // Enforcement
         freezeUnverified = cfg.getBoolean("freeze-unverified", true);
@@ -299,6 +363,104 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
     /** Verification timeout in ticks: config seconds clamped to >= 5, converted at 20 ticks/s. */
     static long timeoutTicks(long timeoutSeconds) {
         return Math.max(1L, Duration.ofSeconds(Math.max(5L, timeoutSeconds)).toSeconds() * 20L);
+    }
+
+    /**
+     * Escalation level from consecutive failures: every {@code failStep} failures
+     * raises one level, capped at {@code maxLevel}. Non-positive config disables.
+     */
+    static int escalationLevel(int consecutiveFailures, int failStep, int maxLevel) {
+        if (failStep <= 0 || maxLevel <= 0 || consecutiveFailures <= 0) return 0;
+        return Math.min(maxLevel, consecutiveFailures / failStep);
+    }
+
+    /** SEQUENCE/REVERSE length under escalation (+1 per level, capped by grid). */
+    static int escalatedSequenceLength(int base, int level, int size) {
+        return Math.max(2, Math.min(size, base + Math.max(0, level)));
+    }
+
+    /** COUNT/LINE target count under escalation (+1 per level, capped). */
+    static int escalatedTargetCount(int base, int level, int size) {
+        return Math.max(1, Math.min(size - 1, base + Math.max(0, level)));
+    }
+
+    /** MATH max-sum under escalation (+bonus per level). */
+    static int escalatedMathMaxSum(int base, int bonusPerLevel, int level) {
+        return Math.max(4, base + Math.max(0, bonusPerLevel) * Math.max(0, level));
+    }
+
+    /** Timeout seconds under escalation (-penalty per level, floor 15s). */
+    static long escalatedTimeoutSeconds(long base, long penaltyPerLevel, int level) {
+        return Math.max(MIN_ESCALATED_TIMEOUT_SECONDS, base - Math.max(0L, penaltyPerLevel) * Math.max(0, level));
+    }
+
+    /**
+     * Sliding-window flood check. Records {@code nowMs} and returns true when
+     * more than {@code maxClicks} clicks fall inside the last {@code windowMs}.
+     * The deque is mutated in place (expired entries pruned).
+     */
+    static boolean recordClickAndCheckFlood(Deque<Long> window, long nowMs, long windowMs, int maxClicks) {
+        window.addLast(nowMs);
+        long cutoff = nowMs - Math.max(1L, windowMs);
+        while (!window.isEmpty() && window.peekFirst() < cutoff) window.pollFirst();
+        return window.size() > Math.max(1, maxClicks);
+    }
+
+    /** Remaining self-verify cooldown in seconds (0 = may proceed). */
+    static long verifyCooldownRemaining(long lastUseMillis, long nowMillis, long cooldownSeconds) {
+        if (cooldownSeconds <= 0) return 0;
+        long elapsed = (nowMillis - lastUseMillis) / 1000L;
+        return Math.max(0L, cooldownSeconds - elapsed);
+    }
+
+    /** True when the IP already hosts {@code maxPerIp} pending players (0 = unlimited). */
+    static boolean ipLimitReached(int pendingOnIp, int maxPerIp) {
+        if (maxPerIp <= 0) return false;
+        return pendingOnIp >= maxPerIp;
+    }
+
+    /** IP string of an online player, or null when unavailable. */
+    static String ipOf(Player player) {
+        if (player == null) return null;
+        var socket = player.getAddress();
+        if (socket == null || socket.getAddress() == null) return null;
+        return socket.getAddress().getHostAddress();
+    }
+
+    /**
+     * Recheck an IP-limited player after a delay. The first refusal notifies
+     * the player; rechecks stay silent until the challenge finally opens.
+     */
+    private void scheduleIpLimitRecheck(Player player) {
+        scheduleForPlayer(player, () -> {
+            if (!player.isOnline() || isVerified(player)
+                    || sessions.get(player.getUniqueId()) != null) {
+                return;
+            }
+            String ip = ipOf(player);
+            if (ip != null && ipLimitReached(countPendingOnIp(ip, player.getUniqueId()), maxPendingPerIp)) {
+                scheduleIpLimitRecheck(player);
+                return;
+            }
+            retryPending.remove(player.getUniqueId());
+            requestVerification(player);
+        }, Math.max(retryDelayTicks, 100L));
+    }
+
+    /** Count players (excluding one UUID) currently awaiting verification from an IP. */
+    int countPendingOnIp(String ip, UUID exclude) {
+        int count = 0;
+        for (UUID id : sessions.keySet()) {
+            if (id.equals(exclude)) continue;
+            Player p = Bukkit.getPlayer(id);
+            if (p != null && p.isOnline() && ip.equals(ipOf(p))) count++;
+        }
+        for (UUID id : retryPending) {
+            if (id.equals(exclude)) continue;
+            Player p = Bukkit.getPlayer(id);
+            if (p != null && p.isOnline() && ip.equals(ipOf(p))) count++;
+        }
+        return count;
     }
 
     /** One row of slots for LINE mode; row is clamped into range. */
@@ -443,6 +605,21 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
             finish(previous, VerificationResult.CANCELLED, false);
         }
 
+        // IP-level protection: refuse new challenges when too many players
+        // from the same address are already awaiting verification.
+        // Admin-forced verifications bypass this check.
+        // Refused players stay frozen (retryPending) and are retried later.
+        if (!force) {
+            String ip = ipOf(player);
+            if (ip != null && ipLimitReached(countPendingOnIp(ip, player.getUniqueId()), maxPendingPerIp)) {
+                retryPending.add(player.getUniqueId());
+                player.sendMessage(message("ip-limit"));
+                scheduleIpLimitRecheck(player);
+                already.complete(VerificationResult.CANCELLED);
+                return already;
+            }
+        }
+
         int size = normalizedSize(getConfig().getInt("challenge-size", 27));
         int maxAttempts = Math.max(1, getConfig().getInt("max-attempts", 3));
         CaptchaHolder holder = new CaptchaHolder(player.getUniqueId());
@@ -453,9 +630,17 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
         for (int i = 0; i < size; i++) slots.add(i);
         Collections.shuffle(slots);
 
+        // Difficulty escalation: consecutive failures make the next puzzle harder.
+        int fails = consecutiveFailures.getOrDefault(player.getUniqueId(), 0);
+        int level = difficultyEscalation
+                ? escalationLevel(fails, escalationStep, escalationMaxLevel) : 0;
+
         ChallengeMode mode = selectMode();
-        int sequenceLength = Math.max(2, Math.min(size, getConfig().getInt("sequence-length", 3)));
-        int targetCount    = Math.max(1, Math.min(size - 1, getConfig().getInt("target-count", 3)));
+        int sequenceLength = escalatedSequenceLength(
+                Math.max(2, Math.min(size, getConfig().getInt("sequence-length", 3))), level, size);
+        int targetCount = escalatedTargetCount(
+                Math.max(1, Math.min(size - 1, getConfig().getInt("target-count", 3))), level, size);
+        int mathSum = escalatedMathMaxSum(mathMaxSum, escalationMathBonus, level);
         ThreadLocalRandom rng = ThreadLocalRandom.current();
         MathChallenge mathChallenge = null;
 
@@ -467,7 +652,7 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
             case REVERSE  -> reverseSlots(slots, sequenceLength);
             case LINE     -> new ArrayList<>(lineSlots(size, size / 9, rng.nextInt(size / 9)));
             case MATH     -> {
-                mathChallenge = buildMathChallenge(mathMaxSum, mathOptionCount, rng);
+                mathChallenge = buildMathChallenge(mathSum, mathOptionCount, rng);
                 mathChallenges.put(player.getUniqueId(), mathChallenge);
                 // The correct slot is the one displaying the answer number.
                 int answerPos = mathChallenge.options().indexOf(mathChallenge.answer());
@@ -497,7 +682,12 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
         CompletableFuture<VerificationResult> future = new CompletableFuture<>();
         CaptchaSession session = new CaptchaSession(player.getUniqueId(), player, holder, mode, expectedSlots, maxAttempts, future);
         retryPending.remove(player.getUniqueId());
+        clickWindows.remove(player.getUniqueId());
         sessions.put(player.getUniqueId(), session);
+
+        if (level > 0) {
+            player.sendMessage(message("escalated").replace("{level}", String.valueOf(level)));
+        }
 
         scheduleForPlayer(player, () -> {
             CaptchaSession current = sessions.get(player.getUniqueId());
@@ -505,8 +695,12 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
             player.openInventory(inventory);
         }, 0L);
 
-        // Timeout
-        long timeoutTicks = timeoutTicks(getConfig().getLong("timeout-seconds", 60));
+        // Timeout (escalation shortens the window)
+        long timeoutSeconds = difficultyEscalation
+                ? escalatedTimeoutSeconds(getConfig().getLong("timeout-seconds", 60),
+                        escalationTimeoutPenalty, level)
+                : getConfig().getLong("timeout-seconds", 60);
+        long timeoutTicks = timeoutTicks(timeoutSeconds);
         scheduleForPlayer(player, () -> {
             CaptchaSession current = sessions.get(player.getUniqueId());
             if (current == session && !session.isCompleted()) {
@@ -522,6 +716,8 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
     public void markVerified(UUID playerId) {
         verified.add(playerId);
         retryPending.remove(playerId);
+        consecutiveFailures.remove(playerId);
+        clickWindows.remove(playerId);
         CaptchaSession session = sessions.remove(playerId);
         if (session != null) finish(session, VerificationResult.SUCCESS, true);
     }
@@ -541,6 +737,21 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
     public boolean isFreezeChat() { return freezeActive(freezeUnverified, freezeChat); }
     public boolean isFreezeCommands() { return freezeActive(freezeUnverified, freezeCommands); }
     public List<String> getCommandWhitelist() { return List.copyOf(commandWhitelist); }
+
+    /**
+     * Self-service verify cooldown check. Returns the remaining seconds when the
+     * player must wait, or 0 when they may proceed (and records this use).
+     * Bypass/admin-forced paths do not call this.
+     */
+    public long checkSelfVerifyCooldown(Player player) {
+        UUID id = player.getUniqueId();
+        long remaining = verifyCooldownRemaining(
+                selfVerifyCooldown.getOrDefault(id, 0L), System.currentTimeMillis(), verifyCooldownSeconds);
+        if (remaining <= 0) {
+            selfVerifyCooldown.put(id, System.currentTimeMillis());
+        }
+        return remaining;
+    }
 
     // ================================================================================
     //  Event handlers (Listener)
@@ -569,11 +780,27 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
         int slot = event.getRawSlot();
         if (slot < 0 || slot >= event.getView().getTopInventory().getSize()) return;
 
+        // --- Anti-script: click flood consumes an attempt ---
+        if (antiFlood) {
+            Deque<Long> window = clickWindows.computeIfAbsent(player.getUniqueId(), k -> new ArrayDeque<>());
+            if (recordClickAndCheckFlood(window, System.currentTimeMillis(), clickWindowMs, clickMaxClicks)) {
+                int attempts = session.registerWrongAttempt();
+                player.sendMessage(message("flood").replace("{remaining}", String.valueOf(session.getRemainingAttempts())));
+                if (attempts >= session.getMaxAttempts()) {
+                    player.sendMessage(message("failed"));
+                    handleTerminal(session, VerificationResult.FAILED);
+                }
+                return;
+            }
+        }
+
         // --- COUNT / LINE modes: arbitrary order ---
         if ((session.getMode() == ChallengeMode.COUNT || session.getMode() == ChallengeMode.LINE)
                 && session.isExpectedSlot(slot)) {
             if (session.advance(slot)) {
                 verified.add(player.getUniqueId());
+                consecutiveFailures.remove(player.getUniqueId());
+                clickWindows.remove(player.getUniqueId());
                 player.sendMessage(message("success"));
                 finish(session, VerificationResult.SUCCESS, true);
             } else {
@@ -591,6 +818,8 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
                 && slot == session.getExpectedSlot()) {
             if (session.advance()) {
                 verified.add(player.getUniqueId());
+                consecutiveFailures.remove(player.getUniqueId());
+                clickWindows.remove(player.getUniqueId());
                 player.sendMessage(message("success"));
                 finish(session, VerificationResult.SUCCESS, true);
             } else {
@@ -648,10 +877,14 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
 
     @EventHandler
     public void onQuit(PlayerQuitEvent event) {
-        CaptchaSession session = sessions.remove(event.getPlayer().getUniqueId());
+        UUID id = event.getPlayer().getUniqueId();
+        CaptchaSession session = sessions.remove(id);
         if (session != null) finish(session, VerificationResult.CANCELLED, false);
-        retryPending.remove(event.getPlayer().getUniqueId());
-        verified.remove(event.getPlayer().getUniqueId());
+        retryPending.remove(id);
+        clickWindows.remove(id);
+        verified.remove(id);
+        // NOTE: consecutiveFailures and selfVerifyCooldown intentionally survive
+        // reconnects so quitting cannot reset difficulty or dodge the cooldown.
     }
 
     // ================================================================================
@@ -672,6 +905,13 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
         FailAction action = (result == VerificationResult.FAILED) ? failAction : expireAction;
 
         finish(session, result, true);
+        clickWindows.remove(session.getPlayerId());
+
+        // Track consecutive failures for difficulty escalation.
+        // SUCCESS clears the counter at the click handlers; KICK also clears below.
+        if (result == VerificationResult.FAILED || result == VerificationResult.EXPIRED) {
+            consecutiveFailures.merge(session.getPlayerId(), 1, Integer::sum);
+        }
 
         if (!player.isOnline()) return;
 
