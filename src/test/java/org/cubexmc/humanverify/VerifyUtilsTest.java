@@ -324,4 +324,32 @@ class VerifyUtilsTest {
         assertTrue(HumanVerifyPlugin.ipLimitReached(9, 3));
         assertFalse(HumanVerifyPlugin.ipLimitReached(99, 0));
     }
+
+    // --- purgeExpiredCooldowns ---
+
+    @Test
+    void purgeRemovesOnlyExpiredCooldowns() {
+        java.util.Map<java.util.UUID, Long> map = new java.util.concurrent.ConcurrentHashMap<>();
+        java.util.UUID fresh = java.util.UUID.randomUUID();
+        java.util.UUID expired = java.util.UUID.randomUUID();
+        java.util.UUID borderline = java.util.UUID.randomUUID();
+        map.put(fresh, 19_500L);     // 0.5s ago, cooldown 10s -> keep
+        map.put(expired, 0L);        // long ago -> purge
+        map.put(borderline, 5_000L); // 15s ago, past 10s TTL -> purge
+        int removed = HumanVerifyPlugin.purgeExpiredCooldowns(map, 20_000L, 10L);
+        assertEquals(2, removed);
+        assertTrue(map.containsKey(fresh));
+        assertFalse(map.containsKey(expired));
+    }
+
+    @Test
+    void purgeWithZeroCooldownKeepsFreshWrites() {
+        java.util.Map<java.util.UUID, Long> map = new java.util.concurrent.ConcurrentHashMap<>();
+        java.util.UUID id = java.util.UUID.randomUUID();
+        map.put(id, 5_000L);
+        // Zero cooldown: everything strictly older is dropped, the map stays usable.
+        int removed = HumanVerifyPlugin.purgeExpiredCooldowns(map, 5_000L, 0L);
+        assertEquals(0, removed);
+        assertTrue(map.containsKey(id));
+    }
 }
