@@ -413,6 +413,24 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
         return Math.max(0L, cooldownSeconds - elapsed);
     }
 
+    /**
+     * Drop cooldown entries long past their TTL. Returns the removed count.
+     * Called lazily when the map grows large so memory stays bounded on
+     * busy servers (every self-verify use adds one entry).
+     */
+    static int purgeExpiredCooldowns(Map<UUID, Long> map, long nowMillis, long cooldownSeconds) {
+        long ttlMs = Math.max(0L, cooldownSeconds) * 1000L;
+        int removed = 0;
+        var it = map.entrySet().iterator();
+        while (it.hasNext()) {
+            if (nowMillis - it.next().getValue() > ttlMs) {
+                it.remove();
+                removed++;
+            }
+        }
+        return removed;
+    }
+
     /** True when the IP already hosts {@code maxPerIp} pending players (0 = unlimited). */
     static boolean ipLimitReached(int pendingOnIp, int maxPerIp) {
         if (maxPerIp <= 0) return false;
@@ -745,10 +763,16 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
      */
     public long checkSelfVerifyCooldown(Player player) {
         UUID id = player.getUniqueId();
+        long now = System.currentTimeMillis();
+        // Amortized cleanup: every self-verify adds one entry, so purge expired
+        // ones once the map grows large to keep memory bounded on busy servers.
+        if (selfVerifyCooldown.size() > 512) {
+            purgeExpiredCooldowns(selfVerifyCooldown, now, verifyCooldownSeconds);
+        }
         long remaining = verifyCooldownRemaining(
-                selfVerifyCooldown.getOrDefault(id, 0L), System.currentTimeMillis(), verifyCooldownSeconds);
+                selfVerifyCooldown.getOrDefault(id, 0L), now, verifyCooldownSeconds);
         if (remaining <= 0) {
-            selfVerifyCooldown.put(id, System.currentTimeMillis());
+            selfVerifyCooldown.put(id, now);
         }
         return remaining;
     }
