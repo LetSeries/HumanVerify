@@ -43,6 +43,14 @@ public final class HumanVerifyCommand implements CommandExecutor, TabCompleter {
                 sender.sendMessage(plugin.message("already-verified"));
                 return true;
             }
+            // Self-service spam guard: repeated /hv verify must not reset
+            // puzzles or dodge the cooldown (session reuse already covers this,
+            // the cooldown additionally rate-limits command spam).
+            long wait = plugin.checkSelfVerifyCooldown(player);
+            if (wait > 0) {
+                sender.sendMessage(plugin.message("cooldown").replace("{seconds}", String.valueOf(wait)));
+                return true;
+            }
             // Non-force call reuses the active session when one exists
             // (no attempt reset); terminal states are messaged by the plugin itself.
             plugin.requestVerification(player);

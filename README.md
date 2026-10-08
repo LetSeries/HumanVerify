@@ -221,6 +221,28 @@ expire-kick-message: '&c验证超时，已被移出服务器。'
 - `RETRY`：关闭当前验证界面，延迟一小段时间后自动弹出新验证。
 - `KICK`：直接踢出玩家，显示对应的踢出消息。
 
+### 难度进阶 / 反脚本
+
+连续失败（`FAILED`/`EXPIRED`）会提升后续验证难度，成功通过后清零（退出重进不清零）：
+
+```yaml
+difficulty-escalation: true # 总开关
+escalation-fail-step: 2     # 每失败 2 次升 1 级
+escalation-max-level: 3     # 最高 3 级
+escalation-timeout-penalty: 10 # 每级超时减少 10 秒（最低 15 秒）
+escalation-math-bonus: 10   # 每级 MATH 和的上限 +10
+```
+
+每级效果：`SEQUENCE`/`REVERSE` 长度 +1、`COUNT`/`LINE` 目标 +1、MATH 更难、超时更短。
+
+```yaml
+anti-flood: true      # 滑动窗口内点击过多则消耗一次尝试
+click-window-ms: 3000 # 窗口 3 秒
+click-max-clicks: 12  # 超过 12 次点击判为刷点击
+verify-cooldown-seconds: 10 # 自助 /hv verify 冷却（秒），0 关闭
+max-pending-per-ip: 3       # 同 IP 并发待验证上限（0 不限），超限拒绝新验证
+```
+
 ### 验证方式
 
 - `COLOR`：在普通按钮中找出唯一的 `correct-material`，默认是绿色羊毛。

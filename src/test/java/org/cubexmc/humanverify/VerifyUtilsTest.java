@@ -249,4 +249,79 @@ class VerifyUtilsTest {
             assertTrue(c.question().contains(" + "), "question format: " + c.question());
         }
     }
+
+    // --- escalationLevel ---
+
+    @Test
+    void escalationLevelStepsAndCaps() {
+        assertEquals(0, HumanVerifyPlugin.escalationLevel(0, 2, 3));
+        assertEquals(0, HumanVerifyPlugin.escalationLevel(1, 2, 3));
+        assertEquals(1, HumanVerifyPlugin.escalationLevel(2, 2, 3));
+        assertEquals(1, HumanVerifyPlugin.escalationLevel(3, 2, 3));
+        assertEquals(3, HumanVerifyPlugin.escalationLevel(6, 2, 3));
+        assertEquals(3, HumanVerifyPlugin.escalationLevel(99, 2, 3));
+    }
+
+    @Test
+    void escalationLevelDisabledConfigs() {
+        assertEquals(0, HumanVerifyPlugin.escalationLevel(10, 0, 3));
+        assertEquals(0, HumanVerifyPlugin.escalationLevel(10, 2, 0));
+        assertEquals(0, HumanVerifyPlugin.escalationLevel(-1, 2, 3));
+    }
+
+    @Test
+    void escalatedScalingHelpers() {
+        assertEquals(4, HumanVerifyPlugin.escalatedSequenceLength(3, 1, 27));
+        assertEquals(27, HumanVerifyPlugin.escalatedSequenceLength(26, 5, 27));
+        assertEquals(4, HumanVerifyPlugin.escalatedTargetCount(3, 1, 27));
+        assertEquals(30, HumanVerifyPlugin.escalatedMathMaxSum(20, 10, 1));
+        assertEquals(50L, HumanVerifyPlugin.escalatedTimeoutSeconds(60L, 10L, 1));
+        // Floor at 15s
+        assertEquals(15L, HumanVerifyPlugin.escalatedTimeoutSeconds(20L, 10L, 5));
+    }
+
+    // --- recordClickAndCheckFlood ---
+
+    @Test
+    void floodTriggersOverLimitInsideWindow() {
+        java.util.Deque<Long> window = new java.util.ArrayDeque<>();
+        // 12 clicks inside 3000ms: no flood yet
+        for (int i = 0; i < 12; i++) {
+            assertFalse(HumanVerifyPlugin.recordClickAndCheckFlood(window, i * 100L, 3000L, 12));
+        }
+        // 13th click inside the window: flood
+        assertTrue(HumanVerifyPlugin.recordClickAndCheckFlood(window, 1200L, 3000L, 12));
+    }
+
+    @Test
+    void floodWindowSlidesOldClicksOut() {
+        java.util.Deque<Long> window = new java.util.ArrayDeque<>();
+        for (int i = 0; i < 12; i++) {
+            HumanVerifyPlugin.recordClickAndCheckFlood(window, i * 100L, 3000L, 12);
+        }
+        // Far future click: old entries expire, no flood
+        assertFalse(HumanVerifyPlugin.recordClickAndCheckFlood(window, 60_000L, 3000L, 12));
+        assertEquals(1, window.size());
+    }
+
+    // --- verifyCooldownRemaining ---
+
+    @Test
+    void cooldownCountsDown() {
+        assertEquals(10L, HumanVerifyPlugin.verifyCooldownRemaining(0L, 0L, 10L));
+        assertEquals(5L, HumanVerifyPlugin.verifyCooldownRemaining(0L, 5_000L, 10L));
+        assertEquals(0L, HumanVerifyPlugin.verifyCooldownRemaining(0L, 10_000L, 10L));
+        assertEquals(0L, HumanVerifyPlugin.verifyCooldownRemaining(0L, 99_000L, 10L));
+        assertEquals(0L, HumanVerifyPlugin.verifyCooldownRemaining(0L, 0L, 0L));
+    }
+
+    // --- ipLimitReached ---
+
+    @Test
+    void ipLimitReachedRespectsLimit() {
+        assertFalse(HumanVerifyPlugin.ipLimitReached(2, 3));
+        assertTrue(HumanVerifyPlugin.ipLimitReached(3, 3));
+        assertTrue(HumanVerifyPlugin.ipLimitReached(9, 3));
+        assertFalse(HumanVerifyPlugin.ipLimitReached(99, 0));
+    }
 }
