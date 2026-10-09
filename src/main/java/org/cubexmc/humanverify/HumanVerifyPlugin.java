@@ -70,6 +70,10 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
     private List<ChallengeMode> enabledModes;
     private int mathMaxSum;
     private int mathOptionCount;
+    private int memoryCount;
+    private long memoryShowTicks;
+    private long reactionBaseTicks;
+    private long reactionExtraTicks;
     // Per-session MATH data: question text + option slot -> displayed number.
     private final Map<UUID, MathChallenge> mathChallenges = new ConcurrentHashMap<>();
 
@@ -172,9 +176,9 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
         var cfg = getConfig();
         boolean changed = false;
 
-        // v4 defaults
+        // v5 defaults
         if (!cfg.isSet("config-version")) {
-            cfg.set("config-version", 4);
+            cfg.set("config-version", 5);
             changed = true;
         }
 
@@ -190,6 +194,11 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
         changed |= setDefault(cfg, "retry-delay-ticks", 20L);
         changed |= setDefault(cfg, "math-max-sum", 20);
         changed |= setDefault(cfg, "math-option-count", 4);
+        // v5: MEMORY / REACTION modes
+        changed |= setDefault(cfg, "memory-count", 3);
+        changed |= setDefault(cfg, "memory-show-ticks", 60L);
+        changed |= setDefault(cfg, "reaction-base-ticks", 40L);
+        changed |= setDefault(cfg, "reaction-extra-ticks", 60L);
         // v4: difficulty escalation (harder puzzles after consecutive failures)
         changed |= setDefault(cfg, "difficulty-escalation", true);
         changed |= setDefault(cfg, "escalation-fail-step", 2);
@@ -217,11 +226,16 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
         changed |= setDefault(cfg, "messages.flood", "&c点击过快，请放慢速度！剩余尝试次数：&e{remaining}");
         changed |= setDefault(cfg, "messages.cooldown", "&c请 &e{seconds} &c秒后再重新验证。");
         changed |= setDefault(cfg, "messages.ip-limit", "&c当前网络下待验证人数过多，请稍后再试。");
+        // v5: MEMORY / REACTION messages
+        changed |= setDefault(cfg, "messages.instructions-memory", "&7记住 &e{count} &7个发光方块的位置！");
+        changed |= setDefault(cfg, "messages.instructions-memory-recall", "&7点击刚才发光的 &a{count} &7个方块。");
+        changed |= setDefault(cfg, "messages.instructions-reaction", "&7等待按钮变 &a绿色&7 后立刻点击！提前点击算失败。");
+        changed |= setDefault(cfg, "messages.too-soon", "&c太心急了！等按钮变绿再点。剩余尝试次数：&e{remaining}");
 
         if (changed) {
-            cfg.set("config-version", 4);
+            cfg.set("config-version", 5);
             saveConfig();
-            getLogger().info("Configuration migrated to version 4 (new defaults written).");
+            getLogger().info("Configuration migrated to version 5 (new defaults written).");
         }
     }
 
@@ -252,6 +266,12 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
         // MATH options
         mathMaxSum     = Math.max(4, cfg.getInt("math-max-sum", 20));
         mathOptionCount = Math.max(2, Math.min(9, cfg.getInt("math-option-count", 4)));
+
+        // MEMORY / REACTION options
+        memoryCount     = Math.max(1, Math.min(9, cfg.getInt("memory-count", 3)));
+        memoryShowTicks = Math.max(10L, cfg.getLong("memory-show-ticks", 60L));
+        reactionBaseTicks  = Math.max(10L, cfg.getLong("reaction-base-ticks", 40L));
+        reactionExtraTicks = Math.max(0L, cfg.getLong("reaction-extra-ticks", 60L));
 
         // Difficulty escalation
         difficultyEscalation = cfg.getBoolean("difficulty-escalation", true);
@@ -516,6 +536,19 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
     /** Immutable MATH challenge data shared with the GUI renderer. */
     record MathChallenge(String question, int answer, List<Integer> options) { }
 
+    /** MEMORY phase-1 slots: distinct random slots, sorted for stable rendering. */
+    static List<Integer> memorySlots(List<Integer> shuffled, int count) {
+        int safe = Math.max(1, Math.min(shuffled.size(), count));
+        List<Integer> picked = new ArrayList<>(shuffled.subList(0, safe));
+        Collections.sort(picked);
+        return List.copyOf(picked);
+    }
+
+    /** REACTION delay in ticks: base + up to extra, drawn from rng. */
+    static long reactionDelayTicks(long baseTicks, long extraTicks, java.util.Random rng) {
+        return Math.max(1L, baseTicks) + (extraTicks > 0 ? rng.nextLong(extraTicks + 1) : 0L);
+    }
+
     /**
      * Whitelist check for frozen commands. Matches on the command word only:
      * "/login" matches "/login" and "/login <args>" but NOT "/loginfoo".
@@ -659,6 +692,7 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
         int targetCount = escalatedTargetCount(
                 Math.max(1, Math.min(size - 1, getConfig().getInt("target-count", 3))), level, size);
         int mathSum = escalatedMathMaxSum(mathMaxSum, escalationMathBonus, level);
+        int memoryTargets = Math.max(1, Math.min(9, memoryCount + level));
         ThreadLocalRandom rng = ThreadLocalRandom.current();
         MathChallenge mathChallenge = null;
 
@@ -669,6 +703,8 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
             case CORNER   -> List.of(cornerSlot(size, rng));
             case REVERSE  -> reverseSlots(slots, sequenceLength);
             case LINE     -> new ArrayList<>(lineSlots(size, size / 9, rng.nextInt(size / 9)));
+            case MEMORY   -> memorySlots(slots, memoryTargets);
+            case REACTION -> List.of(slots.get(0));
             case MATH     -> {
                 mathChallenge = buildMathChallenge(mathSum, mathOptionCount, rng);
                 mathChallenges.put(player.getUniqueId(), mathChallenge);
@@ -702,6 +738,35 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
         retryPending.remove(player.getUniqueId());
         clickWindows.remove(player.getUniqueId());
         sessions.put(player.getUniqueId(), session);
+
+        // MEMORY / REACTION start disarmed (phase 1); others are clickable immediately.
+        if (mode == ChallengeMode.MEMORY) {
+            session.setArmed(false);
+            renderMemoryPhase(inventory, expectedSlots, true);
+            player.sendMessage(color(getConfig().getString("messages.instructions-memory",
+                    "&7记住 &e{count} &7个发光方块的位置！").replace("{count}", String.valueOf(expectedSlots.size()))));
+            scheduleForPlayer(player, () -> {
+                CaptchaSession current = sessions.get(player.getUniqueId());
+                if (current == session && !session.isCompleted() && player.isOnline()) {
+                    renderMemoryPhase(inventory, expectedSlots, false);
+                    session.setArmed(true);
+                    player.sendMessage(color(getConfig().getString("messages.instructions-memory-recall",
+                            "&7点击刚才发光的 &a{count} &7个方块。").replace("{count}", String.valueOf(expectedSlots.size()))));
+                }
+            }, memoryShowTicks);
+        } else if (mode == ChallengeMode.REACTION) {
+            session.setArmed(false);
+            int goSlot = expectedSlots.get(0);
+            renderReactionPhase(inventory, goSlot, false);
+            long delay = reactionDelayTicks(reactionBaseTicks, reactionExtraTicks, rng);
+            scheduleForPlayer(player, () -> {
+                CaptchaSession current = sessions.get(player.getUniqueId());
+                if (current == session && !session.isCompleted() && player.isOnline()) {
+                    renderReactionPhase(inventory, goSlot, true);
+                    session.setArmed(true);
+                }
+            }, delay);
+        }
 
         if (level > 0) {
             player.sendMessage(message("escalated").replace("{level}", String.valueOf(level)));
@@ -804,6 +869,11 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
         int slot = event.getRawSlot();
         if (slot < 0 || slot >= event.getView().getTopInventory().getSize()) return;
 
+        // --- MEMORY phase 1 (memorize): clicks are fully ignored (not even flood-counted) ---
+        if (session.getMode() == ChallengeMode.MEMORY && !session.isArmed()) {
+            return;
+        }
+
         // --- Anti-script: click flood consumes an attempt ---
         if (antiFlood) {
             Deque<Long> window = clickWindows.computeIfAbsent(player.getUniqueId(), k -> new ArrayDeque<>());
@@ -818,9 +888,20 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
             }
         }
 
-        // --- COUNT / LINE modes: arbitrary order ---
-        if ((session.getMode() == ChallengeMode.COUNT || session.getMode() == ChallengeMode.LINE)
-                && session.isExpectedSlot(slot)) {
+        // --- REACTION waiting: any click is too soon and consumes an attempt ---
+        if (session.getMode() == ChallengeMode.REACTION && !session.isArmed()) {
+            int attempts = session.registerWrongAttempt();
+            player.sendMessage(message("too-soon").replace("{remaining}", String.valueOf(session.getRemainingAttempts())));
+            if (attempts >= session.getMaxAttempts()) {
+                player.sendMessage(message("failed"));
+                handleTerminal(session, VerificationResult.FAILED);
+            }
+            return;
+        }
+
+        // --- COUNT / LINE / MEMORY(recall) modes: arbitrary order ---
+        if ((session.getMode() == ChallengeMode.COUNT || session.getMode() == ChallengeMode.LINE
+                || session.getMode() == ChallengeMode.MEMORY) && session.isExpectedSlot(slot)) {
             if (session.advance(slot)) {
                 verified.add(player.getUniqueId());
                 consecutiveFailures.remove(player.getUniqueId());
@@ -838,7 +919,10 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
         }
 
         // --- SEQUENCE / REVERSE / single-target modes: strict order ---
+        // (COUNT / LINE / MEMORY are handled above; they must not fall through here,
+        // otherwise a duplicate click could advance progress without selecting.)
         if (session.getMode() != ChallengeMode.COUNT && session.getMode() != ChallengeMode.LINE
+                && session.getMode() != ChallengeMode.MEMORY
                 && slot == session.getExpectedSlot()) {
             if (session.advance()) {
                 verified.add(player.getUniqueId());
@@ -858,7 +942,8 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
         // --- Wrong click ---
         int attempts = session.registerWrongAttempt();
         if (session.getMode() != ChallengeMode.SEQUENCE && session.getMode() != ChallengeMode.REVERSE
-                && session.getMode() != ChallengeMode.COUNT && session.getMode() != ChallengeMode.LINE) {
+                && session.getMode() != ChallengeMode.COUNT && session.getMode() != ChallengeMode.LINE
+                && session.getMode() != ChallengeMode.MEMORY) {
             event.getView().getTopInventory().setItem(slot, createWrongButton());
         }
         player.sendMessage(message("wrong").replace("{remaining}", String.valueOf(session.getRemainingAttempts())));
@@ -1074,6 +1159,46 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
             item.setItemMeta(meta);
         }
         inventory.setItem(slot, item);
+    }
+
+    /**
+     * MEMORY phase rendering. Phase 1 ({@code show=true}): targets glow green
+     * ("记住这个！"), everything else is a plain button. Phase 2: all slots
+     * reset to plain buttons, the player must recall the glowing positions.
+     */
+    private void renderMemoryPhase(Inventory inventory, List<Integer> targets, boolean show) {
+        int size = inventory.getSize();
+        for (int slot = 0; slot < size; slot++) {
+            ItemStack item = new ItemStack(show && targets.contains(slot) ? correctMaterial : buttonMaterial);
+            ItemMeta meta = item.getItemMeta();
+            if (meta != null) {
+                if (show && targets.contains(slot)) {
+                    meta.displayName(legacy(ChatColor.GREEN + "记住这个！"));
+                } else {
+                    meta.displayName(legacy(ChatColor.WHITE + "验证按钮"));
+                }
+                meta.addItemFlags(ItemFlag.HIDE_ATTRIBUTES);
+                item.setItemMeta(meta);
+            }
+            inventory.setItem(slot, item);
+        }
+    }
+
+    /**
+     * REACTION rendering. Waiting: the slot is red ("等待…").
+     * Go: the same slot turns green ("点我！").
+     */
+    private void renderReactionPhase(Inventory inventory, int goSlot, boolean go) {
+        ItemStack item = new ItemStack(go ? Material.LIME_WOOL : Material.RED_WOOL);
+        ItemMeta meta = item.getItemMeta();
+        if (meta != null) {
+            meta.displayName(legacy(go ? ChatColor.GREEN + "点我！" : ChatColor.RED + "等待…"));
+            meta.lore(List.of(legacy(color(getConfig().getString(
+                    "messages.instructions-reaction", "&7等待按钮变 &a绿色&7 后立刻点击！提前点击算失败。")))));
+            meta.addItemFlags(ItemFlag.HIDE_ATTRIBUTES);
+            item.setItemMeta(meta);
+        }
+        inventory.setItem(goSlot, item);
     }
 
     // ================================================================================
