@@ -20,11 +20,24 @@
 - 支持多种验证方式：唯一颜色方块、唯一材质方块、按编号顺序点击方块、点击指定数量目标方块、找出唯一不同方块、点击中心或角落方块、算术题、倒序点击、整行点击；可固定模式或随机选择。
 - **验证期间冻结**：未验证玩家无法移动、交互、挖掘、放置、攻击、受伤、丢弃物品、聊天、使用指令（均可独立配置开关）。
 - **失败/超时动作可配**：验证失败或超时后自动重开新验证（`RETRY`，默认）或踢出服务器（`KICK`），踢出消息可自定义。
+- **难度进阶**：连续失败会自动提升后续验证难度（题目变长、超时变短），成功通过后清零。
+- **反脚本**：滑动窗口内刷点击会消耗尝试次数；自助验证有冷却；同 IP 并发待验证人数受限。
 - 通过 Bukkit `ServicesManager` 暴露公共 API，其他插件无需依赖实现包即可调用。
 - 使用 Paper/Folia `EntityScheduler`，不依赖传统全局调度器，兼容 Folia 区域线程模型。
-- 提供 `/humanverify verify`、`/humanverify verify <玩家>`、`/humanverify reload`。
+- 提供 `/humanverify verify`、`/humanverify verify <玩家>`、`/humanverify reload`（权限见下表）。
 
 管理员执行 `/humanverify verify <玩家>` 会为目标玩家打开一次真实验证，不会直接将其标记为已验证；如需直接放行其他插件，可调用 API 的 `markVerified`。
+
+## 命令与权限
+
+| 命令 | 所需权限 | 默认 | 说明 |
+|------|----------|------|------|
+| `/humanverify`、`/humanverify verify` | `humanverify.use` | `true`（所有人） | 为自己打开验证；已有未完成验证时复用同一界面，不重置错误次数；受 `verify-cooldown-seconds` 冷却限制 |
+| `/humanverify verify <玩家>` | `humanverify.admin` | `op` | 为目标玩家强制重开验证（`force`，会重置其当前题目）；玩家名大小写不敏感 |
+| `/humanverify reload` | `humanverify.admin` | `op` | 重载配置并补写新增默认项 |
+| （自动验证） | `humanverify.bypass` | `op` | 拥有此权限的玩家进服不弹验证，API 直接返回 `SUCCESS` |
+
+命令别名：`/hv`、`/captcha`。无权限时会显示中文提示。
 
 ## 运行环境
 
@@ -54,7 +67,9 @@ org.cubexmc.humanverify.api.HumanVerifyEvent
 org.cubexmc.humanverify.api.VerificationResult
 ```
 
-普通的 `requestVerification(player)` 是幂等调用：玩家已经在本次在线会话中通过验证时，会直接返回 `SUCCESS`，不会重复打开界面；玩家已有未完成的验证时，会复用该会话（重新打开同一界面，**不会**重置错误次数）。需要让玩家再次完成验证时，使用 `requestVerification(player, true)`。
+普通 `requestVerification(player)` 是幂等调用：玩家已经在本次在线会话中通过验证时，会直接返回 `SUCCESS`，不会重复打开界面；玩家已有未完成的验证时，会复用该会话（重新打开同一界面，**不会**重置错误次数）。需要让玩家再次完成验证时，使用 `requestVerification(player, true)`。
+
+联动插件可用 `api.isPendingVerification(player)` 查询玩家是否正处于“未完成验证（含失败后等待重开）”状态——这正是冻结生效的状态；`isVerified` 只表示已通过。
 
 其他插件应在 `plugin.yml` 中声明依赖，确保 HumanVerify 先加载：
 
@@ -69,7 +84,7 @@ depend:
 <dependency>
     <groupId>org.cubexmc</groupId>
     <artifactId>human-verify</artifactId>
-    <version>1.0.0</version>
+    <version>1.2.1</version> <!-- 替换为实际使用的版本，见 Releases 页 -->
     <scope>provided</scope>
 </dependency>
 ```
@@ -218,8 +233,8 @@ fail-kick-message: '&c验证失败次数过多，已被移出服务器。'
 expire-kick-message: '&c验证超时，已被移出服务器。'
 ```
 
-- `RETRY`：关闭当前验证界面，延迟一小段时间后自动弹出新验证。
-- `KICK`：直接踢出玩家，显示对应的踢出消息。
+- `RETRY`：关闭当前验证界面，延迟一小段时间（`retry-delay-ticks`）后自动弹出新验证；等待期间玩家保持冻结。
+- `KICK`：直接踢出玩家，显示对应的踢出消息。注意：被踢玩家的失败计数**不清零**，重进后难度保持（防止靠重进刷回简单题）。
 
 ### 难度进阶 / 反脚本
 
@@ -285,3 +300,11 @@ enabled-modes:
 
 - 验证 GUI 期间死亡/传送导致的界面关闭会自动重开，这是正常行为。
 - `correct-material`、`wrong-material` 和 `button-material` 只校验是否为可用物品材质；如果修改为与提示文字不匹配的材质，需要同时修改 `messages.instructions`。
+
+## 常见问题
+
+- **玩家说验证太难？** 检查 `difficulty-escalation` 与 `escalation-max-level`：连续失败会升级，后台可用 `/humanverify verify <玩家>` 为其强制重开（`force` 会连同当前题目一起重置，但失败计数不清零，难度保持）。
+- **被机器人刷验证？** 确认 `anti-flood: true`（刷点击扣次数）、`verify-cooldown-seconds`（自助命令限流）、`max-pending-per-ip`（同 IP 并发上限，建议内网/登录服场景按需调大）。
+- **想关掉某类冻结？** `freeze-movement` / `freeze-interact` / `freeze-chat` / `freeze-commands` 可独立关闭；`freeze-unverified: false` 则全部关闭。
+- **改了配置没生效？** 用 `/humanverify reload` 重载；升级后新增配置项会自动补写（`config-version` 当前为 4），已自定义的值不会被覆盖。
+- **验证状态能跨服/跨重启保留吗？** 不能。验证状态只保存在内存本次会话内，玩家退出即清除（失败计数与自助冷却除外）；重启/重载后未验证玩家会重新验证。

@@ -932,7 +932,9 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
         clickWindows.remove(session.getPlayerId());
 
         // Track consecutive failures for difficulty escalation.
-        // SUCCESS clears the counter at the click handlers; KICK also clears below.
+        // SUCCESS clears the counter at the click handlers / markVerified.
+        // KICK and quit intentionally keep it: difficulty survives rejoin
+        // so kicking or relogging cannot dodge escalation (see onQuit).
         if (result == VerificationResult.FAILED || result == VerificationResult.EXPIRED) {
             consecutiveFailures.merge(session.getPlayerId(), 1, Integer::sum);
         }
