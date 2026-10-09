@@ -1,6 +1,6 @@
 # HumanVerify configuration
 # The plugin uses only Bukkit/Paper APIs and is marked Folia-compatible.
-config-version: 5
+config-version: 6
 auto-verify-on-join: true
 timeout-seconds: 60
 max-attempts: 3
@@ -76,6 +76,22 @@ verify-cooldown-seconds: 10
 # Max concurrent unverified players per IP (0 = unlimited). New challenges
 # beyond the limit are refused; admin-forced verifications bypass this.
 max-pending-per-ip: 3
+# Anti-script v2: impossibly fast solves are treated as bots. A solve is
+# bot-like when the time since the puzzle became clickable is below
+# solve-min-ms, or any click interval is below fast-click-ms (non-positive
+# solve-min-ms disables the check). solve-bot-action KICK or RETRY.
+solve-time-check: true
+solve-min-ms: 600
+fast-click-ms: 120
+solve-bot-action: KICK
+# Append a random suffix to each GUI title so bots cannot recognize our
+# verification screen by its inventory title.
+title-shuffle: true
+# Combo: players from never-verified IPs must clear combo-rounds consecutive
+# puzzles (1 = single round, same as before). Admin-forced sessions skip this.
+combo-enabled: true
+combo-rounds: 2
+bot-kick-message: '&c检测到异常验证行为，已被移出服务器。'
 fail-kick-message: '&c验证失败次数过多，已被移出服务器。'
 expire-kick-message: '&c验证超时，已被移出服务器。'
 messages:
@@ -97,6 +113,8 @@ messages:
   instructions-memory-recall: '&7点击刚才发光的 &a{count} &7个方块。'
   instructions-reaction: '&7等待按钮变 &a绿色&7 后立刻点击！提前点击算失败。'
   too-soon: '&c太心急了！等按钮变绿再点。剩余尝试次数：&e{remaining}'
+  combo: '&e验证通过！还需再通过 &c{remaining} &e轮。'
+  suspect: '&c解题速度异常，已加强验证。'
   escalated: '&e检测到多次失败，验证难度已提升至 &c{level} &e级。'
   flood: '&c点击过快，请放慢速度！剩余尝试次数：&e{remaining}'
   cooldown: '&c请 &e{seconds} &c秒后再重新验证。'

@@ -379,4 +379,39 @@ class VerifyUtilsTest {
         assertEquals(0, removed);
         assertTrue(map.containsKey(id));
     }
+
+    // --- isBotLikeSolve ---
+
+    @Test
+    void botLikeOnFastSolveOrFastClick() {
+        assertTrue(HumanVerifyPlugin.isBotLikeSolve(50L, false, 600L));
+        assertTrue(HumanVerifyPlugin.isBotLikeSolve(5_000L, true, 600L));
+        assertFalse(HumanVerifyPlugin.isBotLikeSolve(5_000L, false, 600L));
+        assertFalse(HumanVerifyPlugin.isBotLikeSolve(0L, true, 0L));
+    }
+
+    // --- shuffledTitleSuffix ---
+
+    @Test
+    void titleSuffixIsFourCharsFromPool() {
+        Random rng = new Random(3);
+        java.util.Set<String> seen = new java.util.HashSet<>();
+        for (int i = 0; i < 50; i++) {
+            String s = HumanVerifyPlugin.shuffledTitleSuffix(rng);
+            assertEquals(4, s.length());
+            assertTrue(s.matches("[A-Z2-9]{4}"), "unexpected suffix: " + s);
+            seen.add(s);
+        }
+        assertTrue(seen.size() > 1, "suffix should vary");
+    }
+
+    // --- comboComplete ---
+
+    @Test
+    void comboCompletesAtRounds() {
+        assertFalse(HumanVerifyPlugin.comboComplete(1, 2));
+        assertTrue(HumanVerifyPlugin.comboComplete(2, 2));
+        assertTrue(HumanVerifyPlugin.comboComplete(3, 2));
+        assertTrue(HumanVerifyPlugin.comboComplete(1, 1));
+    }
 }

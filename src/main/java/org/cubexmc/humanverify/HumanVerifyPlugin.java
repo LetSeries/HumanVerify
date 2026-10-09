@@ -112,6 +112,21 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
     // Counted on demand from live sessions + retry-waiting players (no extra bookkeeping).
     private int maxPendingPerIp;
 
+    // -- Anti-script v2 (solve-time) + combo --------------------------------------------
+    private boolean solveTimeCheck;
+    private long solveMinMs;
+    private long fastClickMs;
+    private FailAction solveBotAction;
+    private boolean titleShuffle;
+    private boolean comboEnabled;
+    private int comboRounds;
+    // Consecutive round wins per player (combo); IPs fully verified before.
+    private final Map<UUID, Integer> comboWins = new ConcurrentHashMap<>();
+    private final Set<String> seenIps = ConcurrentHashMap.newKeySet();
+    // Original API futures parked while a combo runs its next round.
+    // Completed (chained or CANCELLED) once the combo resolves or aborts.
+    private final Map<UUID, CompletableFuture<VerificationResult>> comboWaiters = new ConcurrentHashMap<>();
+
     // -- Shutdown flag (prevents RETRY/KICK during onDisable) -----------------------
     private volatile boolean shuttingDown;
 
@@ -159,7 +174,17 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
         mathChallenges.clear();
         retryPending.clear();
         clickWindows.clear();
+        settleComboWaiters(VerificationResult.CANCELLED);
         Bukkit.getServicesManager().unregister(HumanVerifyApi.class, this);
+    }
+
+    /** Settle parked combo futures so API callers never hang on abort paths. */
+    private void settleComboWaiters(VerificationResult result) {
+        for (var entry : new ArrayList<>(comboWaiters.entrySet())) {
+            if (comboWaiters.remove(entry.getKey(), entry.getValue())) {
+                entry.getValue().complete(result);
+            }
+        }
     }
 
     public void reloadPluginConfig() {
@@ -176,9 +201,9 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
         var cfg = getConfig();
         boolean changed = false;
 
-        // v5 defaults
+        // v6 defaults
         if (!cfg.isSet("config-version")) {
-            cfg.set("config-version", 5);
+            cfg.set("config-version", 6);
             changed = true;
         }
 
@@ -231,11 +256,22 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
         changed |= setDefault(cfg, "messages.instructions-memory-recall", "&7点击刚才发光的 &a{count} &7个方块。");
         changed |= setDefault(cfg, "messages.instructions-reaction", "&7等待按钮变 &a绿色&7 后立刻点击！提前点击算失败。");
         changed |= setDefault(cfg, "messages.too-soon", "&c太心急了！等按钮变绿再点。剩余尝试次数：&e{remaining}");
+        // v6: anti-script v2 (solve-time) + combo
+        changed |= setDefault(cfg, "solve-time-check", true);
+        changed |= setDefault(cfg, "solve-min-ms", 600L);
+        changed |= setDefault(cfg, "fast-click-ms", 120L);
+        changed |= setDefault(cfg, "solve-bot-action", "KICK");
+        changed |= setDefault(cfg, "title-shuffle", true);
+        changed |= setDefault(cfg, "combo-enabled", true);
+        changed |= setDefault(cfg, "combo-rounds", 2);
+        changed |= setDefault(cfg, "bot-kick-message", "&c检测到异常验证行为，已被移出服务器。");
+        changed |= setDefault(cfg, "messages.combo", "&e验证通过！还需再通过 &c{remaining} &e轮。");
+        changed |= setDefault(cfg, "messages.suspect", "&c解题速度异常，已加强验证。");
 
         if (changed) {
-            cfg.set("config-version", 5);
+            cfg.set("config-version", 6);
             saveConfig();
-            getLogger().info("Configuration migrated to version 5 (new defaults written).");
+            getLogger().info("Configuration migrated to version 6 (new defaults written).");
         }
     }
 
@@ -290,6 +326,17 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
 
         // IP-level protection (0 = unlimited)
         maxPendingPerIp = Math.max(0, cfg.getInt("max-pending-per-ip", 3));
+
+        // Anti-script v2 (solve-time)
+        solveTimeCheck = cfg.getBoolean("solve-time-check", true);
+        solveMinMs     = Math.max(0L, cfg.getLong("solve-min-ms", 600L));
+        fastClickMs    = Math.max(0L, cfg.getLong("fast-click-ms", 120L));
+        solveBotAction = parseAction(cfg.getString("solve-bot-action", "KICK"));
+        titleShuffle   = cfg.getBoolean("title-shuffle", true);
+
+        // Combo: new IPs must clear N consecutive rounds (0/1 = single round)
+        comboEnabled = cfg.getBoolean("combo-enabled", true);
+        comboRounds  = Math.max(1, cfg.getInt("combo-rounds", 2));
 
         // Enforcement
         freezeUnverified = cfg.getBoolean("freeze-unverified", true);
@@ -457,12 +504,128 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
         return pendingOnIp >= maxPerIp;
     }
 
+    /**
+     * Bot-like solve check: true when the puzzle was solved impossibly fast
+     * (elapsed since clickable below {@code minMs}) or any click interval was
+     * impossibly short. Non-positive {@code minMs} disables the check.
+     */
+    static boolean isBotLikeSolve(long elapsedMs, boolean fastClickSeen, long minMs) {
+        if (minMs <= 0) return false;
+        return fastClickSeen || elapsedMs < minMs;
+    }
+
+    /** Shuffled GUI title suffix for one challenge (anti title-sniffing bots). */
+    static String shuffledTitleSuffix(java.util.Random rng) {
+        char[] pool = "ABCDEFGHJKMNPQRSTUVWXYZ23456789".toCharArray();
+        StringBuilder sb = new StringBuilder(4);
+        for (int i = 0; i < 4; i++) sb.append(pool[rng.nextInt(pool.length)]);
+        return sb.toString();
+    }
+
+    /** Combo progress after one more win: returns true when the combo is complete. */
+    static boolean comboComplete(int winsAfterThis, int rounds) {
+        return winsAfterThis >= Math.max(1, rounds);
+    }
+
     /** IP string of an online player, or null when unavailable. */
     static String ipOf(Player player) {
         if (player == null) return null;
         var socket = player.getAddress();
         if (socket == null || socket.getAddress() == null) return null;
         return socket.getAddress().getHostAddress();
+    }
+
+    /**
+     * Shared success path: solve-time check, then combo or immediate verify.
+     * Bot-like solves (impossibly fast) are converted to FAILED/KICK instead
+     * of SUCCESS. Force-created sessions skip the combo requirement.
+     */
+    private void onPuzzleSolved(Player player, CaptchaSession session) {
+        long now = System.currentTimeMillis();
+        long origin = session.getArmedAt() != 0L ? session.getArmedAt() : session.getCreatedAt();
+        long elapsed = now - origin;
+
+        if (solveTimeCheck && isBotLikeSolve(elapsed, session.hadFastClick(), solveMinMs)) {
+            getLogger().warning("Bot-like solve by " + player.getName()
+                    + " (" + elapsed + "ms, mode=" + session.getMode() + ").");
+            player.sendMessage(message("suspect"));
+            consecutiveFailures.merge(player.getUniqueId(), 1, Integer::sum);
+            comboWins.remove(player.getUniqueId());
+            FailAction action = solveBotAction == null ? FailAction.KICK : solveBotAction;
+            finish(session, VerificationResult.FAILED, true);
+            if (player.isOnline()) {
+                if (action == FailAction.KICK) {
+                    kickPlayer(player, getConfig().getString("bot-kick-message",
+                            "&c检测到异常验证行为，已被移出服务器。"));
+                } else {
+                    retryPending.add(player.getUniqueId());
+                    scheduleForPlayer(player, () -> {
+                        if (player.isOnline() && !isVerified(player)) {
+                            requestVerification(player);
+                        } else {
+                            retryPending.remove(player.getUniqueId());
+                        }
+                    }, retryDelayTicks);
+                }
+            }
+            return;
+        }
+
+        consecutiveFailures.remove(player.getUniqueId());
+        clickWindows.remove(player.getUniqueId());
+
+        // Combo: new IPs must clear N consecutive rounds before verifying.
+        // Intermediate wins do NOT complete the original future: the next round's
+        // result is chained forward so API consumers see a single terminal state.
+        if (!session.isForce() && comboEnabled && comboRounds > 1 && !isKnownIp(player)) {
+            int wins = comboWins.getOrDefault(player.getUniqueId(), 0) + 1;
+            if (!comboComplete(wins, comboRounds)) {
+                comboWins.put(player.getUniqueId(), wins);
+                int remaining = Math.max(1, comboRounds) - wins;
+                player.sendMessage(message("combo").replace("{remaining}", String.valueOf(remaining)));
+                java.util.concurrent.CompletableFuture<VerificationResult> original = session.getFuture();
+                sessions.remove(player.getUniqueId(), session);
+                mathChallenges.remove(player.getUniqueId());
+                clickWindows.remove(player.getUniqueId());
+                // Park the original API future: it stays pending until the next
+                // round chains its result forward. Quit/disable/markVerified
+                // below settle parked waiters so callers never hang.
+                comboWaiters.put(player.getUniqueId(), original);
+                original.thenRun(() -> comboWaiters.remove(player.getUniqueId(), original));
+                // Stay frozen until the next round opens.
+                retryPending.add(player.getUniqueId());
+                scheduleForPlayer(player, () -> {
+                    if (player.isOnline() && player.getOpenInventory().getTopInventory().getHolder() == session.getHolder()) {
+                        player.closeInventory();
+                    }
+                }, 0L);
+                scheduleForPlayer(player, () -> {
+                    if (!player.isOnline() || isVerified(player) || original.isDone()) {
+                        if (sessions.get(player.getUniqueId()) == null) {
+                            retryPending.remove(player.getUniqueId());
+                        }
+                        return;
+                    }
+                    requestVerification(player).thenAccept(original::complete);
+                }, retryDelayTicks);
+                return;
+            }
+            comboWins.remove(player.getUniqueId());
+        } else {
+            comboWins.remove(player.getUniqueId());
+        }
+
+        verified.add(player.getUniqueId());
+        String ip = ipOf(player);
+        if (ip != null) seenIps.add(ip);
+        player.sendMessage(message("success"));
+        finish(session, VerificationResult.SUCCESS, true);
+    }
+
+    /** True when this IP has fully verified at least one player before. */
+    private boolean isKnownIp(Player player) {
+        String ip = ipOf(player);
+        return ip != null && seenIps.contains(ip);
     }
 
     /**
@@ -735,6 +898,7 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
 
         CompletableFuture<VerificationResult> future = new CompletableFuture<>();
         CaptchaSession session = new CaptchaSession(player.getUniqueId(), player, holder, mode, expectedSlots, maxAttempts, future);
+        session.setForce(force);
         retryPending.remove(player.getUniqueId());
         clickWindows.remove(player.getUniqueId());
         sessions.put(player.getUniqueId(), session);
@@ -801,6 +965,9 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
         retryPending.remove(playerId);
         consecutiveFailures.remove(playerId);
         clickWindows.remove(playerId);
+        comboWins.remove(playerId);
+        var waiter = comboWaiters.remove(playerId);
+        if (waiter != null) waiter.complete(VerificationResult.SUCCESS);
         CaptchaSession session = sessions.remove(playerId);
         if (session != null) finish(session, VerificationResult.SUCCESS, true);
     }
@@ -869,9 +1036,15 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
         int slot = event.getRawSlot();
         if (slot < 0 || slot >= event.getView().getTopInventory().getSize()) return;
 
-        // --- MEMORY phase 1 (memorize): clicks are fully ignored (not even flood-counted) ---
+        // --- MEMORY phase 1 (memorize): clicks are fully ignored (not even timed) ---
         if (session.getMode() == ChallengeMode.MEMORY && !session.isArmed()) {
             return;
+        }
+
+        // --- Click-interval analysis: impossibly short gaps are script-like ---
+        long gap = session.recordClick();
+        if (solveTimeCheck && gap >= 0 && gap < Math.max(1L, fastClickMs)) {
+            session.markFastClick();
         }
 
         // --- Anti-script: click flood consumes an attempt ---
@@ -903,11 +1076,7 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
         if ((session.getMode() == ChallengeMode.COUNT || session.getMode() == ChallengeMode.LINE
                 || session.getMode() == ChallengeMode.MEMORY) && session.isExpectedSlot(slot)) {
             if (session.advance(slot)) {
-                verified.add(player.getUniqueId());
-                consecutiveFailures.remove(player.getUniqueId());
-                clickWindows.remove(player.getUniqueId());
-                player.sendMessage(message("success"));
-                finish(session, VerificationResult.SUCCESS, true);
+                onPuzzleSolved(player, session);
             } else {
                 // Mark slot as completed visually
                 markSlotCompleted(event.getView().getTopInventory(), slot);
@@ -925,11 +1094,7 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
                 && session.getMode() != ChallengeMode.MEMORY
                 && slot == session.getExpectedSlot()) {
             if (session.advance()) {
-                verified.add(player.getUniqueId());
-                consecutiveFailures.remove(player.getUniqueId());
-                clickWindows.remove(player.getUniqueId());
-                player.sendMessage(message("success"));
-                finish(session, VerificationResult.SUCCESS, true);
+                onPuzzleSolved(player, session);
             } else {
                 // Mark slot as completed visually
                 markSlotCompleted(event.getView().getTopInventory(), slot);
@@ -989,6 +1154,8 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
         UUID id = event.getPlayer().getUniqueId();
         CaptchaSession session = sessions.remove(id);
         if (session != null) finish(session, VerificationResult.CANCELLED, false);
+        var waiter = comboWaiters.remove(id);
+        if (waiter != null) waiter.complete(VerificationResult.CANCELLED);
         retryPending.remove(id);
         clickWindows.remove(id);
         verified.remove(id);
@@ -1020,8 +1187,10 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
         // SUCCESS clears the counter at the click handlers / markVerified.
         // KICK and quit intentionally keep it: difficulty survives rejoin
         // so kicking or relogging cannot dodge escalation (see onQuit).
+        // A failed round also breaks any in-progress combo.
         if (result == VerificationResult.FAILED || result == VerificationResult.EXPIRED) {
             consecutiveFailures.merge(session.getPlayerId(), 1, Integer::sum);
+            comboWins.remove(session.getPlayerId());
         }
 
         if (!player.isOnline()) return;
@@ -1227,6 +1396,9 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
     /** Title as a Component (preserves color codes). */
     private Component titleComponent() {
         String raw = message("title");
+        // Per-challenge suffix: GUI titles that change every round defeat
+        // bots that sniff the inventory title to recognize our verification GUI.
+        if (titleShuffle) raw = raw + " §8#" + shuffledTitleSuffix(ThreadLocalRandom.current());
         return LegacyComponentSerializer.legacySection().deserialize(raw);
     }
 
