@@ -11,19 +11,25 @@ import org.bukkit.event.entity.EntityDamageByEntityEvent;
 import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.event.entity.EntityPickupItemEvent;
 import org.bukkit.event.entity.EntityToggleGlideEvent;
+import org.bukkit.event.entity.PlayerLeashEntityEvent;
+import org.bukkit.event.entity.ProjectileLaunchEvent;
+import org.bukkit.event.hanging.HangingBreakByEntityEvent;
 import org.bukkit.event.inventory.InventoryClickEvent;
 import org.bukkit.event.inventory.InventoryDragEvent;
 import org.bukkit.event.player.AsyncPlayerChatEvent;
 import org.bukkit.event.player.PlayerCommandPreprocessEvent;
+import org.bukkit.event.vehicle.VehicleDestroyEvent;
 import org.bukkit.event.player.PlayerArmorStandManipulateEvent;
 import org.bukkit.event.player.PlayerBedEnterEvent;
 import org.bukkit.event.player.PlayerBucketEmptyEvent;
 import org.bukkit.event.player.PlayerBucketFillEvent;
 import org.bukkit.event.player.PlayerDropItemEvent;
+import org.bukkit.event.player.PlayerEditBookEvent;
 import org.bukkit.event.player.PlayerFishEvent;
 import org.bukkit.event.player.PlayerInteractEntityEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.event.player.PlayerItemConsumeEvent;
+import org.bukkit.event.player.PlayerPickupArrowEvent;
 import org.bukkit.event.player.PlayerShearEntityEvent;
 import org.bukkit.event.player.PlayerUnleashEntityEvent;
 import org.bukkit.event.player.PlayerMoveEvent;
@@ -61,6 +67,9 @@ public final class VerificationEnforcer implements Listener {
         Player player = event.getPlayer();
         if (!plugin.isPendingVerification(player)) return;
 
+        // getTo() can be null on some Paper builds; a null destination
+        // means no movement to correct — never NPE here.
+        if (event.getTo() == null) return;
         // Only cancel when the block position actually changes (prevents
         // anti-cheat false positives from tiny head-rotation ticks).
         if (event.getFrom().getBlockX() == event.getTo().getBlockX()
@@ -87,6 +96,25 @@ public final class VerificationEnforcer implements Listener {
     public void onInteractEntity(PlayerInteractEntityEvent event) {
         if (!plugin.isFreezeInteract()) return;
         if (plugin.isPendingVerification(event.getPlayer())) {
+            event.setCancelled(true);
+        }
+    }
+
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    public void onEditBook(PlayerEditBookEvent event) {
+        // Unsigned books can carry arbitrary text out of the freeze:
+        // signing/editing is an uncancelled chat-adjacent channel.
+        if (!plugin.isFreezeChat()) return;
+        if (plugin.isPendingVerification(event.getPlayer())) {
+            event.setCancelled(true);
+        }
+    }
+
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    public void onProjectileLaunch(ProjectileLaunchEvent event) {
+        if (!plugin.isFreezeInteract()) return;
+        if (event.getEntity().getShooter() instanceof Player player
+                && plugin.isPendingVerification(player)) {
             event.setCancelled(true);
         }
     }
@@ -234,6 +262,15 @@ public final class VerificationEnforcer implements Listener {
     }
 
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    public void onPickupArrow(PlayerPickupArrowEvent event) {
+        // Arrows have their own pickup event separate from EntityPickupItemEvent.
+        if (!plugin.isFreezeInteract()) return;
+        if (plugin.isPendingVerification(event.getPlayer())) {
+            event.setCancelled(true);
+        }
+    }
+
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     public void onConsume(PlayerItemConsumeEvent event) {
         if (!plugin.isFreezeInteract()) return;
         if (plugin.isPendingVerification(event.getPlayer())) {
@@ -298,9 +335,29 @@ public final class VerificationEnforcer implements Listener {
     }
 
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
-    public void onLeash(org.bukkit.event.entity.PlayerLeashEntityEvent event) {
+    public void onLeash(PlayerLeashEntityEvent event) {
         if (!plugin.isFreezeInteract()) return;
         if (plugin.isPendingVerification(event.getPlayer())) {
+            event.setCancelled(true);
+        }
+    }
+
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    public void onHangingBreak(HangingBreakByEntityEvent event) {
+        // Item frames / paintings: breaking them yields items, same as block break.
+        if (!plugin.isFreezeInteract()) return;
+        if (event.getRemover() instanceof Player player
+                && plugin.isPendingVerification(player)) {
+            event.setCancelled(true);
+        }
+    }
+
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    public void onVehicleDestroy(VehicleDestroyEvent event) {
+        // Boats / minecarts drop themselves when broken.
+        if (!plugin.isFreezeInteract()) return;
+        if (event.getAttacker() instanceof Player player
+                && plugin.isPendingVerification(player)) {
             event.setCancelled(true);
         }
     }

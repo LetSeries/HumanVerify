@@ -84,7 +84,7 @@ depend:
 <dependency>
     <groupId>org.cubexmc</groupId>
     <artifactId>human-verify</artifactId>
-    <version>1.2.1</version> <!-- 替换为实际使用的版本，见 Releases 页 -->
+    <version>1.3.0</version> <!-- 替换为实际使用的版本，见 Releases 页 -->
     <scope>provided</scope>
 </dependency>
 ```
@@ -333,5 +333,5 @@ enabled-modes:
 - **玩家说验证太难？** 检查 `difficulty-escalation` 与 `escalation-max-level`：连续失败会升级，后台可用 `/humanverify verify <玩家>` 为其强制重开（`force` 会连同当前题目一起重置，但失败计数不清零，难度保持）。
 - **被机器人刷验证？** 确认 `anti-flood: true`（刷点击扣次数）、`verify-cooldown-seconds`（自助命令限流）、`max-pending-per-ip`（同 IP 并发上限，建议内网/登录服场景按需调大）。
 - **想关掉某类冻结？** `freeze-movement` / `freeze-interact` / `freeze-chat` / `freeze-commands` 可独立关闭；`freeze-unverified: false` 则全部关闭。
-- **改了配置没生效？** 用 `/humanverify reload` 重载；升级后新增配置项会自动补写（`config-version` 当前为 4），已自定义的值不会被覆盖。
+- **改了配置没生效？** 用 `/humanverify reload` 重载；升级后新增配置项会自动补写（`config-version` 当前为 6），已自定义的值不会被覆盖。
 - **验证状态能跨服/跨重启保留吗？** 不能。验证状态只保存在内存本次会话内，玩家退出即清除（失败计数与自助冷却除外）；重启/重载后未验证玩家会重新验证。

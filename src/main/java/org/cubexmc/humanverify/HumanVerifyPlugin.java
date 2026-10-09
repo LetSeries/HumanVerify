@@ -56,70 +56,73 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
     private final Set<UUID> retryPending = ConcurrentHashMap.newKeySet();
 
     // -- Materials ------------------------------------------------------------------
-    private Material correctMaterial;
-    private Material wrongMaterial;
-    private Material buttonMaterial;
-    private Material targetMaterial;
-    private Material sequenceMaterial;
-    private Material countMaterial;
-    private Material oddOneOutMaterial;
-    private Material oddOneOutTargetMaterial;
+    // Volatile for the same reason: reloads may happen off the region thread.
+    private volatile Material correctMaterial = Material.LIME_WOOL;
+    private volatile Material wrongMaterial = Material.RED_WOOL;
+    private volatile Material buttonMaterial = Material.WHITE_WOOL;
+    private volatile Material targetMaterial = Material.DIAMOND;
+    private volatile Material sequenceMaterial = Material.YELLOW_WOOL;
+    private volatile Material countMaterial = Material.EMERALD;
+    private volatile Material oddOneOutMaterial = Material.IRON_BLOCK;
+    private volatile Material oddOneOutTargetMaterial = Material.GOLD_BLOCK;
 
     // -- Mode config ----------------------------------------------------------------
-    private ChallengeMode configuredMode;
-    private List<ChallengeMode> enabledModes;
-    private int mathMaxSum;
-    private int mathOptionCount;
-    private int memoryCount;
-    private long memoryShowTicks;
-    private long reactionBaseTicks;
-    private long reactionExtraTicks;
+    private volatile ChallengeMode configuredMode = ChallengeMode.RANDOM;
+    private volatile List<ChallengeMode> enabledModes = List.of(ChallengeMode.COLOR);
+    private volatile int mathMaxSum = 20;
+    private volatile int mathOptionCount = 4;
+    private volatile int memoryCount = 3;
+    private volatile long memoryShowTicks = 60L;
+    private volatile long reactionBaseTicks = 40L;
+    private volatile long reactionExtraTicks = 60L;
     // Per-session MATH data: question text + option slot -> displayed number.
     private final Map<UUID, MathChallenge> mathChallenges = new ConcurrentHashMap<>();
 
     // -- Enforcement config ---------------------------------------------------------
-    private boolean freezeUnverified;
-    private boolean freezeMovement;
-    private boolean freezeInteract;
-    private boolean freezeChat;
-    private boolean freezeCommands;
-    private List<String> commandWhitelist;
+    // Volatile: reloadPluginConfig() may run on an async thread (/hv reload via
+    // Folia async command dispatch) while event handlers read these on region threads.
+    private volatile boolean freezeUnverified;
+    private volatile boolean freezeMovement;
+    private volatile boolean freezeInteract;
+    private volatile boolean freezeChat;
+    private volatile boolean freezeCommands;
+    private volatile List<String> commandWhitelist = List.of();
 
     // -- Fail / expire action -------------------------------------------------------
-    private FailAction failAction;
-    private FailAction expireAction;
-    private long retryDelayTicks;
+    private volatile FailAction failAction = FailAction.RETRY;
+    private volatile FailAction expireAction = FailAction.RETRY;
+    private volatile long retryDelayTicks = 20L;
 
     // -- Difficulty escalation ------------------------------------------------------
-    private boolean difficultyEscalation;
-    private int escalationStep;
-    private int escalationMaxLevel;
-    private long escalationTimeoutPenalty;
-    private int escalationMathBonus;
+    private volatile boolean difficultyEscalation;
+    private volatile int escalationStep;
+    private volatile int escalationMaxLevel;
+    private volatile long escalationTimeoutPenalty;
+    private volatile int escalationMathBonus;
     private final Map<UUID, Integer> consecutiveFailures = new ConcurrentHashMap<>();
 
     // -- Anti-script (click flood) ----------------------------------------------------
-    private boolean antiFlood;
-    private long clickWindowMs;
-    private int clickMaxClicks;
+    private volatile boolean antiFlood;
+    private volatile long clickWindowMs;
+    private volatile int clickMaxClicks;
     private final Map<UUID, Deque<Long>> clickWindows = new ConcurrentHashMap<>();
 
     // -- Self-service verify cooldown -------------------------------------------------
-    private long verifyCooldownSeconds;
+    private volatile long verifyCooldownSeconds;
     private final Map<UUID, Long> selfVerifyCooldown = new ConcurrentHashMap<>();
 
     // -- IP-level protection ------------------------------------------------------------
     // Counted on demand from live sessions + retry-waiting players (no extra bookkeeping).
-    private int maxPendingPerIp;
+    private volatile int maxPendingPerIp;
 
     // -- Anti-script v2 (solve-time) + combo --------------------------------------------
-    private boolean solveTimeCheck;
-    private long solveMinMs;
-    private long fastClickMs;
-    private FailAction solveBotAction;
-    private boolean titleShuffle;
-    private boolean comboEnabled;
-    private int comboRounds;
+    private volatile boolean solveTimeCheck;
+    private volatile long solveMinMs;
+    private volatile long fastClickMs;
+    private volatile FailAction solveBotAction;
+    private volatile boolean titleShuffle;
+    private volatile boolean comboEnabled;
+    private volatile int comboRounds;
     // Consecutive round wins per player (combo); IPs fully verified before.
     private final Map<UUID, Integer> comboWins = new ConcurrentHashMap<>();
     private final Set<String> seenIps = ConcurrentHashMap.newKeySet();
@@ -145,6 +148,16 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
 
         Bukkit.getPluginManager().registerEvents(this, this);
         Bukkit.getPluginManager().registerEvents(new VerificationEnforcer(this), this);
+        // Paper-native chat event exists only on Paper forks. Load the bridge
+        // reflectively: on plain Bukkit/Spigot the class would fail verification.
+        try {
+            Class.forName("io.papermc.paper.event.player.AsyncChatEvent");
+            Class<?> bridge = Class.forName("org.cubexmc.humanverify.listener.PaperChatListener");
+            Object listener = bridge.getDeclaredConstructor(HumanVerifyPlugin.class).newInstance(this);
+            Bukkit.getPluginManager().registerEvents((Listener) listener, this);
+        } catch (ReflectiveOperationException | LinkageError e) {
+            getLogger().info("Paper chat bridge not available; using legacy chat event.");
+        }
         Bukkit.getServicesManager().register(HumanVerifyApi.class, this, this, ServicePriority.Normal);
 
         PluginCommand command = getCommand("humanverify");
@@ -1403,8 +1416,11 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
     }
 
     public String message(String key) {
-        String prefix = getConfig().getString("messages.prefix", "");
-        String value = getConfig().getString("messages." + key, key);
+        // Snapshot prefix+value in one call sequence: getConfig() on Folia may
+        // return a reloaded instance between reads, so read once and reuse.
+        var cfg = getConfig();
+        String prefix = cfg.getString("messages.prefix", "");
+        String value = cfg.getString("messages." + key, key);
         return color(prefix + value);
     }
 
