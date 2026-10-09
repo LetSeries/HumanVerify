@@ -20,6 +20,12 @@ public final class CaptchaSession {
     private final AtomicInteger progress = new AtomicInteger();
     private final AtomicBoolean completed = new AtomicBoolean();
     private final java.util.Set<Integer> selectedExpectedSlots = ConcurrentHashMap.newKeySet();
+    /**
+     * Phase flag for MEMORY (memorize -> recall) and REACTION (wait -> go).
+     * {@code false} = phase 1 (look, don't click), {@code true} = phase 2 (click allowed).
+     * Other modes never read this flag.
+     */
+    private final AtomicBoolean armed = new AtomicBoolean(true);
 
     public CaptchaSession(java.util.UUID playerId, org.bukkit.entity.Player player, CaptchaHolder holder, ChallengeMode mode,
                           List<Integer> expectedSlots,
@@ -40,6 +46,8 @@ public final class CaptchaSession {
     public CompletableFuture<VerificationResult> getFuture() { return future; }
     public boolean isCompleted() { return completed.get(); }
     public int getMaxAttempts() { return maxAttempts; }
+    public boolean isArmed() { return armed.get(); }
+    public void setArmed(boolean value) { armed.set(value); }
 
     public int getExpectedSlot() {
         int p = progress.get();

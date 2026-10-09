@@ -1,6 +1,6 @@
 # HumanVerify configuration
 # The plugin uses only Bukkit/Paper APIs and is marked Folia-compatible.
-config-version: 4
+config-version: 5
 auto-verify-on-join: true
 timeout-seconds: 60
 max-attempts: 3
@@ -18,6 +18,8 @@ enabled-modes:
   - MATH
   - REVERSE
   - LINE
+  - MEMORY
+  - REACTION
 target-material: DIAMOND
 sequence-material: YELLOW_WOOL
 sequence-length: 3
@@ -29,6 +31,14 @@ odd-one-out-target-material: GOLD_BLOCK
 # with math-option-count number buttons to choose from.
 math-max-sum: 20
 math-option-count: 4
+# MEMORY mode: memorize memory-count glowing slots shown for memory-show-ticks,
+# then click them back in any order.
+memory-count: 3
+memory-show-ticks: 60
+# REACTION mode: wait for the slot to turn green (after reaction-base-ticks
+# plus up to reaction-extra-ticks), then click it. Clicking early fails.
+reaction-base-ticks: 40
+reaction-extra-ticks: 60
 correct-material: LIME_WOOL
 wrong-material: RED_WOOL
 button-material: WHITE_WOOL
@@ -83,6 +93,10 @@ messages:
   instructions-math: '&7计算 &e{question} &7，点击 &a正确答案&7。'
   instructions-reverse: '&7请按 &e从大到小&7 的顺序点击目标方块。'
   instructions-line: '&7请点击 &a同一行&7 的所有目标方块。'
+  instructions-memory: '&7记住 &e{count} &7个发光方块的位置！'
+  instructions-memory-recall: '&7点击刚才发光的 &a{count} &7个方块。'
+  instructions-reaction: '&7等待按钮变 &a绿色&7 后立刻点击！提前点击算失败。'
+  too-soon: '&c太心急了！等按钮变绿再点。剩余尝试次数：&e{remaining}'
   escalated: '&e检测到多次失败，验证难度已提升至 &c{level} &e级。'
   flood: '&c点击过快，请放慢速度！剩余尝试次数：&e{remaining}'
   cooldown: '&c请 &e{seconds} &c秒后再重新验证。'

@@ -325,6 +325,33 @@ class VerifyUtilsTest {
         assertFalse(HumanVerifyPlugin.ipLimitReached(99, 0));
     }
 
+    // --- memorySlots ---
+
+    @Test
+    void memorySlotsAreDistinctAndSorted() {
+        List<Integer> shuffled = List.of(40, 3, 27, 13, 9, 51, 22);
+        assertEquals(List.of(3, 27, 40), HumanVerifyPlugin.memorySlots(shuffled, 3));
+        assertEquals(List.of(40), HumanVerifyPlugin.memorySlots(shuffled, 1));
+        assertEquals(7, HumanVerifyPlugin.memorySlots(shuffled, 99).size());
+    }
+
+    // --- reactionDelayTicks ---
+
+    @Test
+    void reactionDelayWithinRange() {
+        Random rng = new Random(5);
+        for (int i = 0; i < 50; i++) {
+            long delay = HumanVerifyPlugin.reactionDelayTicks(40L, 60L, rng);
+            assertTrue(delay >= 40L && delay <= 100L, "delay out of range: " + delay);
+        }
+    }
+
+    @Test
+    void reactionDelayNoExtraIsBase() {
+        assertEquals(40L, HumanVerifyPlugin.reactionDelayTicks(40L, 0L, new Random()));
+        assertEquals(1L, HumanVerifyPlugin.reactionDelayTicks(-5L, 0L, new Random()));
+    }
+
     // --- purgeExpiredCooldowns ---
 
     @Test

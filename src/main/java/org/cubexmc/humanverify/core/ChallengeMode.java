@@ -11,7 +11,9 @@ public enum ChallengeMode {
     CORNER("corner"),
     MATH("math"),
     REVERSE("reverse"),
-    LINE("line");
+    LINE("line"),
+    MEMORY("memory"),
+    REACTION("reaction");
 
     private final String configKey;
 
