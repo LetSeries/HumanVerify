@@ -180,4 +180,29 @@ class CaptchaSessionTest {
         assertFalse(s.isExpectedSlot(1)); // already selected
         assertTrue(s.isExpectedSlot(3));
     }
+
+    // --- armed phase flag ---
+
+    @Test
+    void armedDefaultsTrueAndStampsTimeOnArm() throws Exception {
+        CaptchaSession s = session(List.of(1), 3);
+        assertTrue(s.isArmed());
+        assertEquals(0L, s.getArmedAt());
+        s.setArmed(false);
+        assertFalse(s.isArmed());
+        long before = System.currentTimeMillis();
+        s.setArmed(true);
+        assertTrue(s.isArmed());
+        assertTrue(s.getArmedAt() >= before);
+    }
+
+    // --- recordClick ---
+
+    @Test
+    void recordClickFirstReturnsNegativeOne() {
+        CaptchaSession s = session(List.of(1), 3);
+        assertEquals(-1L, s.recordClick());
+        long gap = s.recordClick();
+        assertTrue(gap >= 0L, "second click should report a gap");
+    }
 }

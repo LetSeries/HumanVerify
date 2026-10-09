@@ -260,6 +260,29 @@ verify-cooldown-seconds: 10 # 自助 /hv verify 冷却（秒），0 关闭
 max-pending-per-ip: 3       # 同 IP 并发待验证上限（0 不限），超限拒绝新验证
 ```
 
+### 解题耗时判定 / 标题混淆 / 连过机制
+
+脚本读包后可以瞬间解题，但人类需要视觉搜索 + 移动鼠标（通常 300ms 以上）。插件记录每轮“可点击时刻 → 解出”的耗时与点击间隔：
+
+```yaml
+solve-time-check: true # 总开关
+solve-min-ms: 600      # 解题快于 600ms 判为脚本（0 关闭）
+fast-click-ms: 120     # 任意两次点击间隔 < 120ms 即判脚本
+solve-bot-action: KICK # 判脚本后 KICK（或 RETRY 重开并升级难度）
+```
+
+判脚本后计入一次失败（升级难度），默认直接踢出（`bot-kick-message` 可自定义）。
+
+其他两项：
+
+```yaml
+title-shuffle: true # 每轮 GUI 标题追加随机后缀，防按标题识别的低端脚本
+combo-enabled: true # 新 IP 需连过 combo-rounds 轮才放行
+combo-rounds: 2     # 默认 2 轮；已知 IP（已验证过至少一人）、1 = 单轮
+```
+
+连过中间轮不会提前放行：API 的 Future 只在最后一轮终结；失败/超时会打断连过重新计数。管理员强制验证（`force`）跳过连过要求。
+
 ### 验证方式
 
 - `COLOR`：在普通按钮中找出唯一的 `correct-material`，默认是绿色羊毛。
