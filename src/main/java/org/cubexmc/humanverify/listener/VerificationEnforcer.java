@@ -7,32 +7,40 @@ import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.block.BlockBreakEvent;
 import org.bukkit.event.block.BlockPlaceEvent;
+import org.bukkit.event.block.SignChangeEvent;
 import org.bukkit.event.entity.EntityDamageByEntityEvent;
 import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.event.entity.EntityPickupItemEvent;
+import org.bukkit.event.entity.EntityShootBowEvent;
 import org.bukkit.event.entity.EntityToggleGlideEvent;
 import org.bukkit.event.entity.PlayerLeashEntityEvent;
 import org.bukkit.event.entity.ProjectileLaunchEvent;
 import org.bukkit.event.hanging.HangingBreakByEntityEvent;
+import org.bukkit.event.hanging.HangingPlaceEvent;
 import org.bukkit.event.inventory.InventoryClickEvent;
 import org.bukkit.event.inventory.InventoryDragEvent;
+import org.bukkit.event.inventory.InventoryOpenEvent;
 import org.bukkit.event.player.AsyncPlayerChatEvent;
 import org.bukkit.event.player.PlayerCommandPreprocessEvent;
 import org.bukkit.event.vehicle.VehicleDestroyEvent;
 import org.bukkit.event.player.PlayerArmorStandManipulateEvent;
 import org.bukkit.event.player.PlayerBedEnterEvent;
 import org.bukkit.event.player.PlayerBucketEmptyEvent;
+import org.bukkit.event.player.PlayerBucketEntityEvent;
 import org.bukkit.event.player.PlayerBucketFillEvent;
 import org.bukkit.event.player.PlayerDropItemEvent;
 import org.bukkit.event.player.PlayerEditBookEvent;
 import org.bukkit.event.player.PlayerFishEvent;
+import org.bukkit.event.player.PlayerHarvestBlockEvent;
 import org.bukkit.event.player.PlayerInteractEntityEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.event.player.PlayerItemConsumeEvent;
 import org.bukkit.event.player.PlayerPickupArrowEvent;
 import org.bukkit.event.player.PlayerShearEntityEvent;
+import org.bukkit.event.player.PlayerTakeLecternBookEvent;
 import org.bukkit.event.player.PlayerUnleashEntityEvent;
 import org.bukkit.event.player.PlayerMoveEvent;
+import org.bukkit.event.player.PlayerRiptideEvent;
 import org.bukkit.event.player.PlayerSwapHandItemsEvent;
 import org.bukkit.event.player.PlayerTeleportEvent;
 import org.bukkit.event.player.PlayerToggleFlightEvent;
@@ -94,6 +102,24 @@ public final class VerificationEnforcer implements Listener {
 
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     public void onInteractEntity(PlayerInteractEntityEvent event) {
+        if (!plugin.isFreezeInteract()) return;
+        if (plugin.isPendingVerification(event.getPlayer())) {
+            event.setCancelled(true);
+        }
+    }
+
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    public void onBucketEntity(PlayerBucketEntityEvent event) {
+        // Scooping fish/axolotl with a bucket fires no interact-entity event.
+        if (!plugin.isFreezeInteract()) return;
+        if (plugin.isPendingVerification(event.getPlayer())) {
+            event.setCancelled(true);
+        }
+    }
+
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    public void onHarvest(PlayerHarvestBlockEvent event) {
+        // Berry bushes etc: cancelling the interact does not always stop the harvest.
         if (!plugin.isFreezeInteract()) return;
         if (plugin.isPendingVerification(event.getPlayer())) {
             event.setCancelled(true);
@@ -241,6 +267,24 @@ public final class VerificationEnforcer implements Listener {
         }
     }
 
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    public void onRiptide(PlayerRiptideEvent event) {
+        // Riptide tridents fling the player — a movement channel like flight.
+        if (!plugin.isFreezeMovement()) return;
+        if (plugin.isPendingVerification(event.getPlayer())) {
+            event.setCancelled(true);
+        }
+    }
+
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    public void onOpenSign(SignChangeEvent event) {
+        // Writing on signs lets players publish arbitrary text (chat-adjacent).
+        if (!plugin.isFreezeChat()) return;
+        if (plugin.isPendingVerification(event.getPlayer())) {
+            event.setCancelled(true);
+        }
+    }
+
     /* ---------------------------------------------------------------
      * Inventory extras — swap hands, armor stands, consume, pickup
      * --------------------------------------------------------------- */
@@ -347,6 +391,33 @@ public final class VerificationEnforcer implements Listener {
         // Item frames / paintings: breaking them yields items, same as block break.
         if (!plugin.isFreezeInteract()) return;
         if (event.getRemover() instanceof Player player
+                && plugin.isPendingVerification(player)) {
+            event.setCancelled(true);
+        }
+    }
+
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    public void onHangingPlace(HangingPlaceEvent event) {
+        // Placing paintings / item frames bypasses block-place protection.
+        if (!plugin.isFreezeInteract()) return;
+        if (plugin.isPendingVerification(event.getPlayer())) {
+            event.setCancelled(true);
+        }
+    }
+
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    public void onTakeLecternBook(PlayerTakeLecternBookEvent event) {
+        // Taking the book off a lectern needs no inventory click.
+        if (!plugin.isFreezeInteract()) return;
+        if (plugin.isPendingVerification(event.getPlayer())) {
+            event.setCancelled(true);
+        }
+    }
+
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    public void onShootBow(EntityShootBowEvent event) {
+        if (!plugin.isFreezeInteract()) return;
+        if (event.getEntity() instanceof Player player
                 && plugin.isPendingVerification(player)) {
             event.setCancelled(true);
         }
