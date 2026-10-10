@@ -220,7 +220,7 @@ public final class VerifyListener implements Listener {
 |------|--------|----------|
 | `freeze-unverified` | `true` | 总开关，设为 `false` 关闭所有冻结 |
 | `freeze-movement` | `true` | 禁止移动（方块坐标变化）、传送、开启飞行/滑翔、乘骑/下车载具、激流三叉戟位移 |
-| `freeze-interact` | `true` | 禁止交互、挖掘、放置、攻击、受伤、丢弃物品、换手、摆弄盔甲架、进食/饮用、拾取掉落物、上床睡觉、用水桶装水/倒水、钓鱼、剪羊毛、拴绳/解绳、捞鱼桶/摘浆果/讲台取书、挂画展示框放置破坏、拉弓射箭、打开箱子等容器、切换手持栏、饥饿掉饱食度 |
+| `freeze-interact` | `true` | 禁止交互、挖掘、放置、攻击、受伤、丢弃物品、换手、摆弄盔甲架、进食/饮用、拾取掉落物、上床睡觉、用水桶装水/倒水、钓鱼、剪羊毛、拴绳/解绳、捞鱼桶/摘浆果/讲台取书、挂画展示框放置破坏、拉弓射箭、打开箱子等容器、切换手持栏、饥饿掉饱食度、实体放置（盔甲架/水晶）；Paper 端额外冻结展示框旋转、花盆、讲台放书、蜂巢剪切 |
 | `freeze-chat` | `true` | 禁止聊天（含 Paper 原生聊天通道、书本署名、告示牌写字） |
 | `freeze-commands` | `true` | 禁止使用指令 |
 | `command-whitelist` | `[/login, /register]` | 白名单指令（按指令词精确匹配，如 `/login 密码` 放行，`/loginfoo` 拦截），`freeze-commands=true` 时放行 |
