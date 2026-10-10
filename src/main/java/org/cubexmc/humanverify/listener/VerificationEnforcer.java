@@ -11,6 +11,7 @@ import org.bukkit.event.block.SignChangeEvent;
 import org.bukkit.event.entity.EntityDamageByEntityEvent;
 import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.event.entity.EntityPickupItemEvent;
+import org.bukkit.event.entity.EntityPlaceEvent;
 import org.bukkit.event.entity.EntityShootBowEvent;
 import org.bukkit.event.entity.EntityToggleGlideEvent;
 import org.bukkit.event.entity.FoodLevelChangeEvent;
@@ -465,6 +466,16 @@ public final class VerificationEnforcer implements Listener {
         if (!plugin.isFreezeInteract()) return;
         if (event.getEntity() instanceof Player player
                 && plugin.isPendingVerification(player)) {
+            event.setCancelled(true);
+        }
+    }
+
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    public void onEntityPlace(EntityPlaceEvent event) {
+        // Armor stands / crystals bypass block-place protection when spawned as entities.
+        if (!plugin.isFreezeInteract()) return;
+        Player player = event.getPlayer();
+        if (player != null && plugin.isPendingVerification(player)) {
             event.setCancelled(true);
         }
     }
