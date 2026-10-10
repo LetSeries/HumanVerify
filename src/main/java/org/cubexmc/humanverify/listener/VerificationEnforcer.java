@@ -13,6 +13,7 @@ import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.event.entity.EntityPickupItemEvent;
 import org.bukkit.event.entity.EntityShootBowEvent;
 import org.bukkit.event.entity.EntityToggleGlideEvent;
+import org.bukkit.event.entity.FoodLevelChangeEvent;
 import org.bukkit.event.entity.PlayerLeashEntityEvent;
 import org.bukkit.event.entity.ProjectileLaunchEvent;
 import org.bukkit.event.hanging.HangingBreakByEntityEvent;
@@ -22,7 +23,6 @@ import org.bukkit.event.inventory.InventoryDragEvent;
 import org.bukkit.event.inventory.InventoryOpenEvent;
 import org.bukkit.event.player.AsyncPlayerChatEvent;
 import org.bukkit.event.player.PlayerCommandPreprocessEvent;
-import org.bukkit.event.vehicle.VehicleDestroyEvent;
 import org.bukkit.event.player.PlayerArmorStandManipulateEvent;
 import org.bukkit.event.player.PlayerBedEnterEvent;
 import org.bukkit.event.player.PlayerBucketEmptyEvent;
@@ -35,6 +35,7 @@ import org.bukkit.event.player.PlayerHarvestBlockEvent;
 import org.bukkit.event.player.PlayerInteractEntityEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.event.player.PlayerItemConsumeEvent;
+import org.bukkit.event.player.PlayerItemHeldEvent;
 import org.bukkit.event.player.PlayerPickupArrowEvent;
 import org.bukkit.event.player.PlayerShearEntityEvent;
 import org.bukkit.event.player.PlayerTakeLecternBookEvent;
@@ -44,7 +45,9 @@ import org.bukkit.event.player.PlayerRiptideEvent;
 import org.bukkit.event.player.PlayerSwapHandItemsEvent;
 import org.bukkit.event.player.PlayerTeleportEvent;
 import org.bukkit.event.player.PlayerToggleFlightEvent;
+import org.bukkit.event.vehicle.VehicleDestroyEvent;
 import org.bukkit.event.vehicle.VehicleEnterEvent;
+import org.bukkit.event.vehicle.VehicleExitEvent;
 import org.bukkit.inventory.CraftingInventory;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.InventoryHolder;
@@ -218,6 +221,19 @@ public final class VerificationEnforcer implements Listener {
     }
 
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    public void onInventoryOpen(InventoryOpenEvent event) {
+        // Opening chests, furnaces, etc. while unverified: theGUI must stay
+        // the only open top inventory (open-close ping-pong also bypasses click guards).
+        if (!plugin.isFreezeInteract()) return;
+        if (!(event.getPlayer() instanceof Player player)) return;
+        if (!plugin.isPendingVerification(player)) return;
+
+        InventoryHolder holder = event.getInventory().getHolder();
+        if (holder instanceof org.cubexmc.humanverify.core.CaptchaHolder) return;
+        event.setCancelled(true);
+    }
+
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     public void onDrag(InventoryDragEvent event) {
         if (!plugin.isFreezeInteract()) return;
         if (!(event.getWhoClicked() instanceof Player player)) return;
@@ -268,10 +284,40 @@ public final class VerificationEnforcer implements Listener {
     }
 
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    public void onVehicleExit(VehicleExitEvent event) {
+        // Dismounting mid-ride relocates the player — same escape channel as entering.
+        if (!plugin.isFreezeMovement()) return;
+        if (event.getExited() instanceof Player player && plugin.isPendingVerification(player)) {
+            event.setCancelled(true);
+        }
+    }
+
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     public void onRiptide(PlayerRiptideEvent event) {
         // Riptide tridents fling the player — a movement channel like flight.
         if (!plugin.isFreezeMovement()) return;
         if (plugin.isPendingVerification(event.getPlayer())) {
+            event.setCancelled(true);
+        }
+    }
+
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    public void onItemHeld(PlayerItemHeldEvent event) {
+        // Hotbar switching while unverified: blocks weapon/tool swaps that
+        // interact handlers alone cannot stop (e.g. totem/offhand tricks).
+        if (!plugin.isFreezeInteract()) return;
+        if (plugin.isPendingVerification(event.getPlayer())) {
+            event.setCancelled(true);
+        }
+    }
+
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    public void onFoodLevel(FoodLevelChangeEvent event) {
+        // Starving while frozen would damage/kill through the damage guard
+        // (hunger bypasses EntityDamageEvent on some builds).
+        if (!plugin.isFreezeInteract()) return;
+        if (event.getEntity() instanceof Player player
+                && plugin.isPendingVerification(player)) {
             event.setCancelled(true);
         }
     }
