@@ -388,6 +388,9 @@ class VerifyUtilsTest {
         assertTrue(HumanVerifyPlugin.isBotLikeSolve(5_000L, true, 600L));
         assertFalse(HumanVerifyPlugin.isBotLikeSolve(5_000L, false, 600L));
         assertFalse(HumanVerifyPlugin.isBotLikeSolve(0L, true, 0L));
+        // Negative elapsed (clock anomaly) is unknown, never bot-like.
+        assertFalse(HumanVerifyPlugin.isBotLikeSolve(-1L, false, 600L));
+        assertFalse(HumanVerifyPlugin.isBotLikeSolve(-1L, true, 600L));
     }
 
     // --- shuffledTitleSuffix ---

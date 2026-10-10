@@ -13,7 +13,7 @@ public final class CaptchaSession {
     private final org.bukkit.entity.Player player;
     private final CaptchaHolder holder;
     private final ChallengeMode mode;
-    private List<Integer> expectedSlots;
+    private final List<Integer> expectedSlots;
     private final int maxAttempts;
     private final CompletableFuture<VerificationResult> future;
     private final AtomicInteger attempts = new AtomicInteger();
@@ -26,12 +26,11 @@ public final class CaptchaSession {
      * Other modes never read this flag.
      */
     private final AtomicBoolean armed = new AtomicBoolean(true);
-    /** Epoch millis when the challenge was created (for solve-time analysis). */
-    private final long createdAt = System.currentTimeMillis();
-    /** Epoch millis of the last GUI click, for click-interval analysis. */
-    private final java.util.concurrent.atomic.AtomicLong lastClickAt = new java.util.concurrent.atomic.AtomicLong(0L);
-    /** Epoch millis when the session became clickable (armed), 0 = immediately. */
-    private final java.util.concurrent.atomic.AtomicLong armedAt = new java.util.concurrent.atomic.AtomicLong(0L);
+    // Monotonic clock (nanoTime): solve-time analysis must survive OS wall-clock
+    // steps (NTP sync, VM suspend) — a backward step must never flag a player.
+    private final long createdNanos = System.nanoTime();
+    private final java.util.concurrent.atomic.AtomicLong lastClickNanos = new java.util.concurrent.atomic.AtomicLong(0L);
+    private final java.util.concurrent.atomic.AtomicLong armedNanos = new java.util.concurrent.atomic.AtomicLong(0L);
     /** True when created via force (admin/API): success verifies immediately, skipping combo. */
     private final AtomicBoolean force = new AtomicBoolean(false);
     /** Latched when any click interval is impossibly short (script-like). */
@@ -58,11 +57,18 @@ public final class CaptchaSession {
     public int getMaxAttempts() { return maxAttempts; }
     public boolean isArmed() { return armed.get(); }
     public void setArmed(boolean value) {
-        if (value) armedAt.set(System.currentTimeMillis());
+        if (value) armedNanos.set(System.nanoTime());
         armed.set(value);
     }
-    public long getCreatedAt() { return createdAt; }
-    public long getArmedAt() { return armedAt.get(); }
+    /** Monotonic timestamps (nanoTime): immune to wall-clock steps. */
+    public long getCreatedNanos() { return createdNanos; }
+    public long getArmedNanos() { return armedNanos.get(); }
+    /** @deprecated Use {@link #getCreatedNanos()} — wall clock can step backward. */
+    @Deprecated
+    public long getCreatedAt() { return 0L; }
+    /** @deprecated Use {@link #getArmedNanos()} — wall clock can step backward. */
+    @Deprecated
+    public long getArmedAt() { return 0L; }
     public boolean isForce() { return force.get(); }
     public void setForce(boolean value) { force.set(value); }
     public void markFastClick() { fastClickSeen.set(true); }
@@ -70,9 +76,9 @@ public final class CaptchaSession {
 
     /** Records a GUI click; returns ms since the previous click, or -1 for the first click. */
     public long recordClick() {
-        long now = System.currentTimeMillis();
-        long prev = lastClickAt.getAndSet(now);
-        return prev == 0L ? -1L : now - prev;
+        long now = System.nanoTime();
+        long prev = lastClickNanos.getAndSet(now);
+        return prev == 0L ? -1L : (now - prev) / 1_000_000L;
     }
 
     public int getExpectedSlot() {
