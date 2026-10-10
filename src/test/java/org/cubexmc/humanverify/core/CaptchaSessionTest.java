@@ -184,16 +184,20 @@ class CaptchaSessionTest {
     // --- armed phase flag ---
 
     @Test
+    @SuppressWarnings("deprecation")
     void armedDefaultsTrueAndStampsTimeOnArm() throws Exception {
         CaptchaSession s = session(List.of(1), 3);
         assertTrue(s.isArmed());
-        assertEquals(0L, s.getArmedAt());
+        assertEquals(0L, s.getArmedNanos());
         s.setArmed(false);
         assertFalse(s.isArmed());
-        long before = System.currentTimeMillis();
+        long before = System.nanoTime();
         s.setArmed(true);
         assertTrue(s.isArmed());
-        assertTrue(s.getArmedAt() >= before);
+        assertTrue(s.getArmedNanos() >= before);
+        // Deprecated wall-clock stubs stay inert for API compatibility.
+        assertEquals(0L, s.getCreatedAt());
+        assertEquals(0L, s.getArmedAt());
     }
 
     // --- recordClick ---

@@ -521,9 +521,11 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
      * Bot-like solve check: true when the puzzle was solved impossibly fast
      * (elapsed since clickable below {@code minMs}) or any click interval was
      * impossibly short. Non-positive {@code minMs} disables the check.
+     * Negative elapsed is treated as unknown, never bot-like (defense in depth;
+     * callers use a monotonic clock so this should not happen).
      */
     static boolean isBotLikeSolve(long elapsedMs, boolean fastClickSeen, long minMs) {
-        if (minMs <= 0) return false;
+        if (minMs <= 0 || elapsedMs < 0) return false;
         return fastClickSeen || elapsedMs < minMs;
     }
 
@@ -554,9 +556,10 @@ public final class HumanVerifyPlugin extends JavaPlugin implements Listener, Hum
      * of SUCCESS. Force-created sessions skip the combo requirement.
      */
     private void onPuzzleSolved(Player player, CaptchaSession session) {
-        long now = System.currentTimeMillis();
-        long origin = session.getArmedAt() != 0L ? session.getArmedAt() : session.getCreatedAt();
-        long elapsed = now - origin;
+        // Monotonic clock: immune to NTP/VM wall-clock steps.
+        long now = System.nanoTime();
+        long origin = session.getArmedNanos() != 0L ? session.getArmedNanos() : session.getCreatedNanos();
+        long elapsed = (now - origin) / 1_000_000L;
 
         if (solveTimeCheck && isBotLikeSolve(elapsed, session.hadFastClick(), solveMinMs)) {
             getLogger().warning("Bot-like solve by " + player.getName()
